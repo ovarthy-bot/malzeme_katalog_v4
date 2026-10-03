@@ -1,0 +1,1723 @@
+<!doctype html>
+<html lang="tr" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Uçak Parçaları Rehberi</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --page: #dfe6f2;
+      --header: #4a6fb5;
+      --primary: #4a6fb5;
+      --bg: #eef2f8;
+      --surface: #ffffff;
+      --surface-2: #f4f6fb;
+      --text: #1d2433;
+      --muted: #7a8398;
+      --border: #dde3ee;
+      --chip: #e4ebf7;
+      --ok: #2e9e5b;
+      --bad: #c0392b;
+      --shadow: 0 6px 20px rgba(20, 30, 60, .12);
+    }
+
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --page: #080a0f;
+      --header: #2a4478;
+      --primary: #7ea2e6;
+      --bg: #0f1218;
+      --surface: #1a1f2b;
+      --surface-2: #141924;
+      --text: #e6eaf2;
+      --muted: #8b95a9;
+      --border: #2a3142;
+      --chip: #1f2b44;
+      --shadow: 0 6px 20px rgba(0, 0, 0, .45);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body { height: 100%; margin: 0; }
+
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    svg {
+      width: 20px;
+      height: 20px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    /* ---------- Cihaz çerçevesi ---------- */
+
+    .device { height: 100vh; height: 100dvh; width: 100%; }
+
+    .screen {
+      position: relative;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg);
+      overflow: hidden;
+    }
+
+    .notch, .status-bar { display: none; }
+
+    @media (min-width: 768px) {
+      body {
+        background: linear-gradient(135deg, #e8edf6, #c9d4e6);
+        background: var(--page);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .device {
+        width: 390px;
+        height: 844px;
+        padding: 12px;
+        border-radius: 56px;
+        background: #1c1e24;
+        box-shadow: 0 30px 60px rgba(0, 0, 0, .3), inset 0 0 0 2px #3a3d46;
+      }
+
+      .screen { border-radius: 44px; }
+
+      .status-bar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        height: 44px;
+        padding: 0 28px;
+        background: var(--header);
+        color: #fff;
+        font-size: 15px;
+        font-weight: 600;
+        flex-shrink: 0;
+      }
+
+      .notch {
+        display: block;
+        position: absolute;
+        top: 8px;
+        left: 50%;
+        translate: -50% 0;
+        width: 120px;
+        height: 32px;
+        background: #000;
+        border-radius: 20px;
+        z-index: 50;
+      }
+    }
+
+    /* ---------- Üst çubuk ---------- */
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      height: 56px;
+      padding: 0 12px;
+      background: var(--header);
+      color: #fff;
+      flex-shrink: 0;
+    }
+
+    .topbar h1 {
+      flex: 1;
+      margin: 0;
+      font-size: 18px;
+      font-weight: 700;
+      text-align: center;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .topbar-spacer { width: 40px; flex-shrink: 0; }
+
+    .topbar .icon-btn {
+      background: transparent;
+      border-color: transparent;
+      color: #fff;
+    }
+
+    /* ---------- Görünümler ---------- */
+
+    .views { flex: 1; min-height: 0; position: relative; }
+
+    .view {
+      position: absolute;
+      inset: 0;
+      display: none;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    .view.active { display: flex; }
+
+    .scroll {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+
+    /* ---------- Arama ve araç çubuğu ---------- */
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 12px 8px;
+    }
+
+    .search {
+      flex: 1;
+      min-width: 0;
+      height: 42px;
+      padding: 0 12px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--surface);
+      color: var(--text);
+      font: inherit;
+      font-size: 15px;
+      outline: none;
+    }
+
+    .search:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(74, 111, 181, .2);
+    }
+
+    .icon-btn {
+      width: 42px;
+      height: 42px;
+      flex-shrink: 0;
+      display: grid;
+      place-items: center;
+      padding: 0;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      list-style: none;
+    }
+
+    .icon-btn::-webkit-details-marker { display: none; }
+
+    .icon-btn[aria-pressed="true"] { color: var(--primary); }
+
+    .dropdown { position: relative; }
+
+    .dropdown .menu {
+      position: absolute;
+      right: 0;
+      top: 48px;
+      z-index: 20;
+      min-width: 170px;
+      padding: 6px;
+      border-radius: 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow);
+    }
+
+    .menu button {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      width: 100%;
+      padding: 10px 12px;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--text);
+      font: inherit;
+      font-size: 14px;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .menu button:hover, .menu button.active { background: var(--chip); }
+
+    .menu .arrow { font-weight: 700; color: var(--primary); }
+
+    .info {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 0 12px 8px;
+    }
+
+    .filter-chip {
+      align-self: flex-start;
+      padding: 6px 12px;
+      border: 0;
+      border-radius: 999px;
+      background: var(--chip);
+      color: var(--primary);
+      font: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .filter-chip:disabled {
+      background: transparent;
+      color: var(--muted);
+      padding-left: 0;
+      font-weight: 500;
+      cursor: default;
+    }
+
+    .count-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 8px;
+    }
+
+    .result-count { font-size: 16px; font-weight: 700; }
+
+    .sort-info { font-size: 13px; color: var(--muted); }
+
+    /* ---------- Katalog grid ---------- */
+
+    .grid-wrap { padding: 12px; }
+
+    .grid {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-auto-rows: 200px;
+    }
+
+    .card {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      overflow: hidden;
+      border-radius: 12px;
+      background: var(--surface);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, .08);
+      cursor: pointer;
+    }
+
+    .thumb {
+      position: relative;
+      flex: 1;
+      min-height: 0;
+      background: var(--surface-2);
+    }
+
+    .thumb img {
+      position: absolute;
+      inset: 6px;
+      width: calc(100% - 12px);
+      height: calc(100% - 12px);
+      object-fit: contain;
+    }
+
+    .card .meta { padding: 6px 8px 8px; min-width: 0; }
+
+    .card .title,
+    .card .sub {
+      display: block;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .card .title { font-size: 12px; font-weight: 700; }
+
+    .card .sub { font-size: 11px; color: var(--muted); }
+
+    .grid[data-mode="1x1"] .title { font-size: 18px; }
+    .grid[data-mode="1x1"] .sub { font-size: 14px; }
+
+    .empty {
+      grid-column: 1 / -1;
+      margin: 40px 0;
+      text-align: center;
+      color: var(--muted);
+    }
+
+    .sentinel { height: 1px; }
+
+    /* ---------- Listeler (Uçak tipleri, Teknisyen notları) ---------- */
+
+    .list-wrap { padding: 12px; }
+
+    .list { display: flex; flex-direction: column; gap: 10px; }
+
+    .list-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      width: 100%;
+      padding: 14px;
+      border: 0;
+      border-radius: 12px;
+      background: var(--surface);
+      color: var(--text);
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, .08);
+    }
+
+    .list-main {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .list-title { font-size: 15px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .list-sub { font-size: 12px; color: var(--muted); }
+
+    .note-text {
+      font-size: 13px;
+      line-height: 1.4;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .chev { color: var(--muted); flex-shrink: 0; }
+    .chev svg { width: 18px; height: 18px; }
+
+    /* ---------- Form ---------- */
+
+    .form-wrap { padding: 16px; }
+
+    .part-form { display: flex; flex-direction: column; gap: 14px; }
+
+    .field { display: flex; flex-direction: column; gap: 6px; }
+
+    .field label { font-size: 13px; font-weight: 600; color: var(--muted); }
+
+    .field input,
+    .field textarea {
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface);
+      color: var(--text);
+      font: inherit;
+      font-size: 15px;
+      outline: none;
+    }
+
+    .field input:focus,
+    .field textarea:focus { border-color: var(--primary); }
+
+    .field textarea { min-height: 84px; resize: vertical; }
+
+    .field input[type="file"] { padding: 8px; font-size: 14px; }
+
+    .hint { margin: 0; font-size: 12px; color: var(--muted); }
+
+    .preview {
+      width: 100%;
+      aspect-ratio: 4 / 3;
+      border-radius: 12px;
+      background: var(--surface-2);
+      object-fit: contain;
+    }
+
+    .btn {
+      height: 46px;
+      padding: 0 16px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--surface);
+      color: var(--text);
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .btn.primary {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: #fff;
+    }
+
+    .btn:disabled { opacity: .6; cursor: wait; }
+
+    /* ---------- Ayarlar ---------- */
+
+    .settings { padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+
+    .section-title {
+      margin: 8px 0 0;
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      color: var(--muted);
+    }
+
+    .setting-card {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 14px;
+      border-radius: 12px;
+      background: var(--surface);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, .08);
+    }
+
+    .setting-card > span { font-weight: 600; font-size: 15px; }
+
+    .segmented {
+      display: grid;
+      grid-auto-flow: column;
+      grid-auto-columns: 1fr;
+      gap: 4px;
+      padding: 4px;
+      border-radius: 12px;
+      background: var(--surface-2);
+    }
+
+    .segmented button {
+      height: 36px;
+      border: 0;
+      border-radius: 9px;
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .segmented button[aria-pressed="true"] {
+      background: var(--primary);
+      color: #fff;
+    }
+
+    .conn { display: flex; align-items: center; gap: 10px; }
+    .conn strong { display: block; font-size: 15px; }
+    .conn small { display: block; font-size: 12px; color: var(--muted); word-break: break-all; }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      flex-shrink: 0;
+      border-radius: 50%;
+      background: var(--muted);
+    }
+    .dot.ok { background: var(--ok); }
+    .dot.bad { background: var(--bad); }
+
+    /* ---------- Alt menü ---------- */
+
+    .bottom-nav {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      flex-shrink: 0;
+      padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+    }
+
+    .nav-btn {
+      display: grid;
+      place-items: center;
+      height: 48px;
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+    }
+
+    .nav-btn svg { width: 24px; height: 24px; }
+    .nav-btn.active { color: var(--primary); }
+
+    /* ---------- Sheet (alttan açılan paneller) ---------- */
+
+    dialog.sheet {
+      position: fixed;
+      bottom: 0;
+      left: 50%;
+      translate: -50% 0;
+      width: min(100%, 390px);
+      max-height: 88dvh;
+      margin: 0;
+      padding: 0;
+      border: 0;
+      border-radius: 20px 20px 0 0;
+      background: var(--surface);
+      color: var(--text);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    dialog.sheet:not([open]) { display: none; }
+
+    dialog.sheet[open] {
+      display: flex;
+      flex-direction: column;
+      animation: sheet-up .25s ease-out;
+    }
+
+    dialog.sheet::backdrop { background: rgba(10, 15, 30, .45); }
+
+    @keyframes sheet-up {
+      from { transform: translateY(100%); }
+      to { transform: none; }
+    }
+
+    .sheet-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 12px 0 16px;
+    }
+
+    .sheet-head h2 { margin: 0; font-size: 17px; }
+
+    .sheet-body {
+      overflow-y: auto;
+      padding: 12px 16px calc(16px + env(safe-area-inset-bottom));
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .sheet-body h3 {
+      margin: 0 0 8px;
+      font-size: 13px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+
+    .sheet-actions { display: flex; gap: 10px; }
+    .sheet-actions .btn { flex: 1; }
+
+    .detail-img {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 4 / 3;
+      border-radius: 14px;
+      background: var(--surface-2);
+    }
+
+    .detail-img img {
+      position: absolute;
+      inset: 10px;
+      width: calc(100% - 20px);
+      height: calc(100% - 20px);
+      object-fit: contain;
+    }
+
+    .detail-title { margin: 0; font-size: 20px; }
+    .detail-pn { margin: 0; font-size: 14px; color: var(--muted); }
+
+    dl.fields {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 10px 14px;
+      margin: 0;
+      font-size: 14px;
+    }
+
+    dl.fields dt { color: var(--muted); }
+    dl.fields dd { margin: 0; white-space: pre-wrap; word-break: break-word; }
+
+    .pills { display: flex; flex-wrap: wrap; gap: 8px; }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 12px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      font-size: 14px;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .mi-icon { display: grid; width: 24px; color: var(--primary); }
+
+    .pill input { margin: 0; accent-color: var(--primary); }
+    .pill small { color: var(--muted); }
+
+    .menu-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      width: 100%;
+      padding: 14px 4px;
+      border: 0;
+      border-bottom: 1px solid var(--border);
+      background: transparent;
+      color: var(--text);
+      font: inherit;
+      font-size: 16px;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    /* ---------- Bildirim ---------- */
+
+    .toast {
+      position: absolute;
+      left: 50%;
+      bottom: 92px;
+      translate: -50% 0;
+      z-index: 100;
+      max-width: min(90%, 360px);
+      padding: 10px 16px;
+      border-radius: 12px;
+      background: #1d2433;
+      color: #fff;
+      font-size: 14px;
+      text-align: center;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .2s;
+    }
+
+    .toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+  <div class="device">
+    <div class="screen">
+      <div class="notch" aria-hidden="true"></div>
+      <div class="status-bar" aria-hidden="true"><span>9:41</span><span>▂▄▆ 5G ▭</span></div>
+
+      <header class="topbar">
+        <button id="menuBtn" class="icon-btn" type="button" aria-label="Menü" data-icon="menu"></button>
+        <h1 id="pageTitle">Uçak Parçaları Rehberi</h1>
+        <span class="topbar-spacer" aria-hidden="true"></span>
+      </header>
+
+      <main class="views">
+        <!-- Katalog -->
+        <section class="view active" data-view="catalog">
+          <div class="toolbar">
+            <input id="search" class="search" type="search" placeholder="Parça no, ad veya not ara…" autocomplete="off" aria-label="Parça ara">
+
+            <details id="sortDropdown" class="dropdown">
+              <summary class="icon-btn" aria-label="Sırala" title="Sırala" data-icon="sliders"></summary>
+              <div id="sortMenu" class="menu">
+                <button type="button" data-sort="part_number">Parça No <span class="arrow"></span></button>
+                <button type="button" data-sort="material_desc">Ad <span class="arrow"></span></button>
+                <button type="button" data-sort="created_at">Tarih <span class="arrow"></span></button>
+              </div>
+            </details>
+
+            <button id="filterBtn" class="icon-btn" type="button" aria-label="Filtrele" title="Filtrele" data-icon="funnel"></button>
+            <button id="gridBtn" class="icon-btn" type="button" aria-label="Görünüm" title="Görünüm" data-icon="grid"></button>
+          </div>
+
+          <div class="info">
+            <button id="filterChip" class="filter-chip" type="button" disabled>Filtre: Tümü</button>
+            <div class="count-row">
+              <span id="resultCount" class="result-count">Yükleniyor…</span>
+              <span id="sortInfo" class="sort-info"></span>
+            </div>
+          </div>
+
+          <div id="gridWrap" class="scroll grid-wrap">
+            <div id="grid" class="grid"></div>
+            <div id="gridSentinel" class="sentinel"></div>
+          </div>
+        </section>
+
+        <!-- Uçak tipleri -->
+        <section class="view" data-view="types">
+          <div class="scroll list-wrap">
+            <div id="typesList" class="list"></div>
+          </div>
+        </section>
+
+        <!-- Teknisyen notları -->
+        <section class="view" data-view="notes">
+          <div id="notesWrap" class="scroll list-wrap">
+            <div id="notesList" class="list"></div>
+            <div id="notesSentinel" class="sentinel"></div>
+          </div>
+        </section>
+
+        <!-- Parça ekle / düzenle -->
+        <section class="view" data-view="form">
+          <div class="scroll form-wrap">
+            <form id="partForm" class="part-form" novalidate>
+              <div class="field">
+                <label for="f_part_number">Parça numarası *</label>
+                <input id="f_part_number" name="part_number" maxlength="80" autocomplete="off" required>
+              </div>
+
+              <div class="field">
+                <label for="f_ac_type">Uçak tipi *</label>
+                <input id="f_ac_type" name="ac_type" list="acList" maxlength="40" autocomplete="off" required>
+                <datalist id="acList"></datalist>
+              </div>
+
+              <div class="field">
+                <label for="f_material_type">Malzeme tipi *</label>
+                <input id="f_material_type" name="material_type" list="mtList" maxlength="60" autocomplete="off" required>
+                <datalist id="mtList"></datalist>
+              </div>
+
+              <div class="field">
+                <label for="f_material_desc">Malzeme tanımı</label>
+                <input id="f_material_desc" name="material_desc" maxlength="160" autocomplete="off">
+              </div>
+
+              <div class="field">
+                <label for="f_teknisyen_agzi">Teknisyen ağzı</label>
+                <textarea id="f_teknisyen_agzi" name="teknisyen_agzi"></textarea>
+              </div>
+
+              <div class="field">
+                <label for="f_notes">Notlar</label>
+                <textarea id="f_notes" name="notes"></textarea>
+              </div>
+
+              <div class="field">
+                <label for="f_image">Görsel</label>
+                <input id="f_image" name="image" type="file" accept="image/jpeg,image/png,image/webp">
+                <p id="formHint" class="hint"></p>
+              </div>
+
+              <div id="previewWrap" class="field" hidden>
+                <img id="preview" class="preview" alt="Görsel önizleme">
+              </div>
+
+              <button id="saveBtn" class="btn primary" type="submit">Kaydet</button>
+            </form>
+          </div>
+        </section>
+
+        <!-- Ayarlar -->
+        <section class="view" data-view="settings">
+          <div class="scroll settings">
+            <h3 class="section-title">Görünüm</h3>
+
+            <div class="setting-card">
+              <span>Tema</span>
+              <div class="segmented">
+                <button type="button" data-theme-set="light">Açık</button>
+                <button type="button" data-theme-set="dark">Koyu</button>
+              </div>
+            </div>
+
+            <div class="setting-card">
+              <span>Katalog grid modu</span>
+              <div class="segmented">
+                <button type="button" data-grid-set="1x1">1x1</button>
+                <button type="button" data-grid-set="2x3">2x3</button>
+                <button type="button" data-grid-set="3x4">3x4</button>
+              </div>
+            </div>
+
+            <h3 class="section-title">Sistem</h3>
+
+            <div class="setting-card">
+              <span>Veritabanı bağlantısı</span>
+              <div class="conn">
+                <span id="connDot" class="dot"></span>
+                <div>
+                  <strong id="connStatus">Kontrol ediliyor…</strong>
+                  <small id="connDetail"></small>
+                </div>
+              </div>
+              <button id="connRefresh" class="btn" type="button">Yeniden kontrol et</button>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <nav class="bottom-nav" aria-label="Ana menü">
+        <button class="nav-btn" type="button" data-nav="catalog" data-icon="home" aria-label="Katalog"></button>
+        <button class="nav-btn" type="button" data-nav="types" data-icon="plane" aria-label="Uçak Tipleri"></button>
+        <button class="nav-btn" type="button" data-nav="add" data-icon="plus" aria-label="Parça Ekle"></button>
+        <button class="nav-btn" type="button" data-nav="notes" data-icon="notes" aria-label="Teknisyen Notları"></button>
+        <button class="nav-btn" type="button" data-nav="settings" data-icon="gear" aria-label="Ayarlar"></button>
+      </nav>
+
+      <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    </div>
+  </div>
+
+  <!-- Parça detayı -->
+  <dialog id="detailSheet" class="sheet" aria-labelledby="detailTitle">
+    <div class="sheet-head">
+      <h2>Parça Detayı</h2>
+      <button class="icon-btn" type="button" data-close aria-label="Kapat" data-icon="close"></button>
+    </div>
+    <div class="sheet-body">
+      <div class="detail-img"><img id="detailImg" alt=""></div>
+      <h2 id="detailTitle" class="detail-title"></h2>
+      <p id="detailPn" class="detail-pn"></p>
+      <dl id="detailFields" class="fields"></dl>
+      <div class="sheet-actions">
+        <button id="detailEdit" class="btn primary" type="button">Düzenle</button>
+        <button class="btn" type="button" data-close>Kapat</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Filtre paneli -->
+  <dialog id="filterSheet" class="sheet" aria-labelledby="filterTitle">
+    <div class="sheet-head">
+      <h2 id="filterTitle">Filtrele</h2>
+      <button class="icon-btn" type="button" data-close aria-label="Kapat" data-icon="close"></button>
+    </div>
+    <div class="sheet-body">
+      <div>
+        <h3>Uçak tipi</h3>
+        <div id="acOptions" class="pills"></div>
+      </div>
+      <div>
+        <h3>Malzeme tipi</h3>
+        <div id="mtOptions" class="pills"></div>
+      </div>
+      <div class="sheet-actions">
+        <button id="filterClear" class="btn" type="button">Temizle</button>
+        <button id="filterApply" class="btn primary" type="button">Uygula</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Menü -->
+  <dialog id="menuSheet" class="sheet" aria-labelledby="menuTitle">
+    <div class="sheet-head">
+      <h2 id="menuTitle">Menü</h2>
+      <button class="icon-btn" type="button" data-close aria-label="Kapat" data-icon="close"></button>
+    </div>
+    <div class="sheet-body">
+      <button class="menu-item" type="button" data-nav-sheet="catalog"><span class="mi-icon" data-icon="home"></span>Katalog</button>
+      <button class="menu-item" type="button" data-nav-sheet="types"><span class="mi-icon" data-icon="plane"></span>Uçak Tipleri</button>
+      <button class="menu-item" type="button" data-nav-sheet="add"><span class="mi-icon" data-icon="plus"></span>Parça Ekle</button>
+      <button class="menu-item" type="button" data-nav-sheet="notes"><span class="mi-icon" data-icon="notes"></span>Teknisyen Notları</button>
+      <button class="menu-item" type="button" data-nav-sheet="settings"><span class="mi-icon" data-icon="gear"></span>Ayarlar</button>
+    </div>
+  </dialog>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>
+    /* ==========================================================
+       Yapılandırma
+       ========================================================== */
+
+    const SUPABASE_URL = 'https://rkjnyexhnkiigvwnqvtx.supabase.co';
+    const SUPABASE_KEY = 'sb_publishable_EmbtWNix9l-WR-kVoaWwDA_oBV2h29Z';
+    const BUCKET = 'part-images';
+    const PAGE_SIZE = 30;
+    const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+    const IMAGE_EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
+
+    const GRID_MODES = {
+      '1x1': { rows: 1, cols: 1 },
+      '2x3': { rows: 2, cols: 3 },
+      '3x4': { rows: 3, cols: 4 },
+    };
+    const GRID_ORDER = ['2x3', '3x4', '1x1'];
+
+    // Her alanın ilk seçildiğinde kullanacağı yön
+    const SORT_FIELDS = {
+      part_number: { label: 'Parça No', asc: true },
+      material_desc: { label: 'Ad', asc: true },
+      created_at: { label: 'Tarih', asc: false },
+    };
+
+    const TITLES = {
+      catalog: 'Uçak Parçaları Rehberi',
+      types: 'Uçak Tipleri',
+      notes: 'Teknisyen Notları',
+      form: 'Yeni Parça',
+      settings: 'Ayarlar',
+    };
+
+    const ICONS = {
+      menu: '<line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>',
+      back: '<line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/>',
+      close: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
+      sliders: '<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>',
+      funnel: '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>',
+      grid: '<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>',
+      home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h5v-6h4v6h5V9.5"/>',
+      plane: '<path d="M10.5 2.5c.6 0 1 .4 1 1v6.2l8 4.3v2l-8-2.3V19l2.5 1.7v1.5L12 21.4l-3 .8v-1.5L11.5 19v-4.3l-8 2.3v-2l8-4.3V3.5c0-.6.4-1 1-1z"/>',
+      plus: '<circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/>',
+      notes: '<rect x="5" y="3" width="14" height="18" rx="2"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="13" y2="16"/>',
+      gear: '<circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="8" stroke-dasharray="3 2.6"/>',
+      chevron: '<polyline points="9 6 15 12 9 18"/>',
+    };
+
+    const PLACEHOLDER_SRC = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">' +
+      '<rect width="200" height="200" fill="#e9edf5"/>' +
+      '<g fill="none" stroke="#8a97b3" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">' +
+      '<rect x="50" y="50" width="100" height="78" rx="8"/><circle cx="82" cy="81" r="10"/><path d="M60 119l30-24 22 17 14-11 14 18"/>' +
+      '</g>' +
+      '<text x="100" y="160" text-anchor="middle" font-family="Arial, sans-serif" font-size="15" font-weight="bold" fill="#5b6785">Görsel yüklenmemiş</text>' +
+      '</svg>'
+    );
+
+    /* ==========================================================
+       Yardımcılar
+       ========================================================== */
+
+    const prefs = {
+      get(key, fallback) {
+        try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; }
+      },
+      set(key, value) {
+        try { localStorage.setItem(key, value); } catch { /* yoksay */ }
+      },
+    };
+
+    const state = {
+      view: 'catalog',
+      prevView: 'catalog',
+      search: '',
+      sortField: 'created_at',
+      sortAsc: false,
+      acFilter: new Set(),
+      mtFilter: new Set(),
+      gridMode: prefs.get('gridMode', '2x3'),
+      theme: prefs.get('theme', 'light'),
+      acCounts: new Map(),
+      mtValues: [],
+      editing: null,
+      detailId: null,
+      partsById: new Map(),
+    };
+    if (!GRID_MODES[state.gridMode]) state.gridMode = '2x3';
+    if (!['light', 'dark'].includes(state.theme)) state.theme = 'light';
+
+    const els = Object.fromEntries([...document.querySelectorAll('[id]')].map((el) => [el.id, el]));
+
+    let sb = null;
+    let catalogPager = null;
+    let notesPager = null;
+
+    function svg(inner) {
+      return `<svg viewBox="0 0 24 24" aria-hidden="true">${inner}</svg>`;
+    }
+
+    function setIcon(el, name) {
+      el.innerHTML = svg(ICONS[name]);
+    }
+
+    function h(tag, className, text) {
+      const el = document.createElement(tag);
+      if (className) el.className = className;
+      if (text !== undefined && text !== null) el.textContent = text;
+      return el;
+    }
+
+    function trSort(a, b) {
+      return a.localeCompare(b, 'tr');
+    }
+
+    function formatDate(iso) {
+      if (!iso) return '—';
+      return new Date(iso).toLocaleDateString('tr-TR', { day: '2-digit', month: 'short', year: 'numeric' });
+    }
+
+    function setImage(img, src) {
+      img.onerror = () => {
+        img.onerror = null;
+        img.src = PLACEHOLDER_SRC;
+      };
+      img.src = src || PLACEHOLDER_SRC;
+    }
+
+    let toastTimer = null;
+    function toast(message) {
+      els.toast.textContent = message;
+      els.toast.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => els.toast.classList.remove('show'), 3000);
+    }
+
+    function errorMessage(err) {
+      if (err?.code === '23505') return 'Bu parça numarası zaten kayıtlı.';
+      if (err?.code === '42501' || /row-level security/i.test(err?.message || '')) return 'Bu işlem için yetkiniz yok.';
+      if (/fetch|network/i.test(err?.message || '')) return 'Sunucuya bağlanılamadı. İnternet bağlantınızı kontrol edin.';
+      return 'Hata oluştu: ' + (err?.message || 'Bilinmeyen hata');
+    }
+
+    /* ==========================================================
+       Veri erişimi
+       ========================================================== */
+
+    // PostgREST varsayılan olarak en fazla 1000 satır döndürür; hepsini sayfalı çekiyoruz.
+    async function fetchAll(columns) {
+      const rows = [];
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await sb
+          .from('parts')
+          .select(columns)
+          .order('id', { ascending: true })
+          .range(from, from + 999);
+        if (error) throw error;
+        rows.push(...data);
+        if (data.length < 1000) return rows;
+      }
+    }
+
+    // ac_type / material_type seçenekleri ve uçak tipi sayıları (DISTINCT, istemci tarafında)
+    async function loadMeta() {
+      const rows = await fetchAll('ac_type, material_type');
+      const counts = new Map();
+      const materials = new Set();
+      for (const r of rows) {
+        if (r.ac_type) counts.set(r.ac_type, (counts.get(r.ac_type) || 0) + 1);
+        if (r.material_type) materials.add(r.material_type);
+      }
+      state.acCounts = counts;
+      state.mtValues = [...materials].sort(trSort);
+      fillDatalists();
+    }
+
+    function fillDatalists() {
+      const toOption = (value) => {
+        const o = h('option');
+        o.value = value;
+        return o;
+      };
+      els.acList.replaceChildren(...[...state.acCounts.keys()].sort(trSort).map(toOption));
+      els.mtList.replaceChildren(...state.mtValues.map(toOption));
+    }
+
+    function searchTerm() {
+      // PostgREST or() ifadesini bozan karakterleri temizle
+      return state.search.replace(/[(),"\\%*]/g, ' ').trim();
+    }
+
+    function catalogQuery() {
+      let q = sb.from('parts').select('*', { count: 'exact' });
+      if (state.acFilter.size) q = q.in('ac_type', [...state.acFilter]);
+      if (state.mtFilter.size) q = q.in('material_type', [...state.mtFilter]);
+
+      const term = searchTerm();
+      if (term) {
+        q = q.or(['part_number', 'material_desc', 'notes', 'teknisyen_agzi']
+          .map((col) => `${col}.ilike.*${term}*`)
+          .join(','));
+      }
+
+      return q
+        .order(state.sortField, { ascending: state.sortAsc })
+        .order('id', { ascending: state.sortAsc });
+    }
+
+    /* ==========================================================
+       Sayfalama (sonsuz kaydırma)
+       ========================================================== */
+
+    class Pager {
+      constructor({ root, sentinel, fetchPage, onReset, onPage }) {
+        this.root = root;
+        this.fetchPage = fetchPage;
+        this.onReset = onReset;
+        this.onPage = onPage;
+        this.gen = 0;
+        this.offset = 0;
+        this.hasMore = true;
+        this.loading = false;
+
+        this.observer = new IntersectionObserver((entries) => {
+          if (entries.some((e) => e.isIntersecting)) this.loadMore();
+        }, { root, rootMargin: '240px 0px' });
+        this.observer.observe(sentinel);
+      }
+
+      reset() {
+        this.gen++;
+        this.offset = 0;
+        this.hasMore = true;
+        this.loading = false;
+        this.onReset();
+        this.loadMore();
+      }
+
+      async loadMore() {
+        if (this.loading || !this.hasMore) return;
+        const gen = this.gen;
+        this.loading = true;
+        try {
+          const { rows, count } = await this.fetchPage(this.offset, PAGE_SIZE);
+          if (gen !== this.gen) return; // Bu sırada filtre değişti, sonucu yok say
+          this.offset += rows.length;
+          this.hasMore = rows.length === PAGE_SIZE;
+          this.loading = false;
+          this.onPage(rows, count);
+          // Sayfa ekranı doldurmadıysa bir sonrakini de çek
+          if (this.hasMore && this.root.scrollHeight - this.root.clientHeight < 240) this.loadMore();
+        } catch (err) {
+          if (gen !== this.gen) return;
+          this.loading = false;
+          this.hasMore = false;
+          toast(errorMessage(err));
+        }
+      }
+    }
+
+    /* ==========================================================
+       Katalog
+       ========================================================== */
+
+    function createCard(part) {
+      state.partsById.set(part.id, part);
+
+      const card = h('div', 'card');
+      card.setAttribute('role', 'button');
+      card.tabIndex = 0;
+
+      const thumb = h('div', 'thumb');
+      const img = h('img');
+      img.loading = 'lazy';
+      img.alt = part.material_desc || part.part_number;
+      setImage(img, part.image_url);
+      thumb.append(img);
+
+      const meta = h('div', 'meta');
+      meta.append(
+        h('span', 'title', part.material_desc || part.part_number),
+        h('span', 'sub', part.material_desc ? part.part_number : '')
+      );
+
+      card.append(thumb, meta);
+      card.addEventListener('click', () => openDetail(part.id));
+      card.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') openDetail(part.id);
+      });
+      return card;
+    }
+
+    function setCount(count) {
+      if (count === null) els.resultCount.textContent = 'Yükleniyor…';
+      else if (count === 0) els.resultCount.textContent = 'Sonuç bulunamadı';
+      else els.resultCount.textContent = `${count} Sonuç Bulundu`;
+    }
+
+    function applyGridLayout() {
+      const { rows, cols } = GRID_MODES[state.gridMode];
+      const wrap = els.gridWrap;
+      const style = getComputedStyle(wrap);
+      const padding = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+      const gap = 10;
+      // Görünür alan, satır sayısına bölünür: 2x3 modunda ekranda 2 satır görünür
+      const available = wrap.clientHeight - padding - gap * (rows - 1);
+      els.grid.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+      els.grid.style.gridAutoRows = `${Math.max(120, Math.floor(available / rows))}px`;
+      els.grid.dataset.mode = state.gridMode;
+    }
+
+    function setGridMode(mode) {
+      state.gridMode = mode;
+      prefs.set('gridMode', mode);
+      applyGridLayout();
+      document.querySelectorAll('[data-grid-set]').forEach((b) => {
+        b.setAttribute('aria-pressed', String(b.dataset.gridSet === mode));
+      });
+      els.gridBtn.title = `Görünüm: ${mode}`;
+    }
+
+    function nextGridMode() {
+      return GRID_ORDER[(GRID_ORDER.indexOf(state.gridMode) + 1) % GRID_ORDER.length];
+    }
+
+    function updateSortUI() {
+      document.querySelectorAll('#sortMenu [data-sort]').forEach((btn) => {
+        const active = btn.dataset.sort === state.sortField;
+        btn.classList.toggle('active', active);
+        btn.querySelector('.arrow').textContent = active ? (state.sortAsc ? '↑' : '↓') : '';
+      });
+      els.sortInfo.textContent = `${SORT_FIELDS[state.sortField].label} ${state.sortAsc ? '↑' : '↓'}`;
+    }
+
+    function updateFilterChip() {
+      const ac = [...state.acFilter];
+      const mt = [...state.mtFilter];
+      const active = ac.length > 0 || mt.length > 0;
+      let text = `Filtre: ${ac.length ? ac.join(', ') : 'Tümü'}`;
+      if (mt.length) text += ` | ${mt.join(', ')}`;
+      els.filterChip.textContent = text;
+      els.filterChip.disabled = !active;
+      els.filterChip.title = active ? 'Filtreleri temizle' : '';
+    }
+
+    function clearFilters() {
+      state.acFilter = new Set();
+      state.mtFilter = new Set();
+      updateFilterChip();
+      catalogPager.reset();
+    }
+
+    function openFilterSheet() {
+      buildPills(els.acOptions, [...state.acCounts.keys()].sort(trSort), state.acFilter, state.acCounts);
+      buildPills(els.mtOptions, state.mtValues, state.mtFilter);
+      els.filterSheet.showModal();
+    }
+
+    function buildPills(container, values, selected, counts) {
+      container.replaceChildren(...values.map((v) => {
+        const label = h('label', 'pill');
+        const input = h('input');
+        input.type = 'checkbox';
+        input.value = v;
+        input.checked = selected.has(v);
+        label.append(input, document.createTextNode(v));
+        if (counts) label.append(h('small', null, `(${counts.get(v)})`));
+        return label;
+      }));
+    }
+
+    function checkedValues(container) {
+      return new Set([...container.querySelectorAll('input:checked')].map((i) => i.value));
+    }
+
+    function applyFilters() {
+      state.acFilter = checkedValues(els.acOptions);
+      state.mtFilter = checkedValues(els.mtOptions);
+      els.filterSheet.close();
+      updateFilterChip();
+      catalogPager.reset();
+    }
+
+    /* ==========================================================
+       Uçak tipleri
+       ========================================================== */
+
+    function renderTypes() {
+      const entries = [...state.acCounts.entries()].sort((a, b) => trSort(a[0], b[0]));
+      if (!entries.length) {
+        els.typesList.replaceChildren(h('p', 'empty', 'Henüz uçak tipi yok.'));
+        return;
+      }
+
+      els.typesList.replaceChildren(...entries.map(([name, count]) => {
+        const row = h('button', 'list-row');
+        row.type = 'button';
+        const main = h('span', 'list-main');
+        main.append(h('span', 'list-title', name), h('span', 'list-sub', `${count} parça`));
+        const chev = h('span', 'chev');
+        chev.innerHTML = svg(ICONS.chevron);
+        row.append(main, chev);
+        row.addEventListener('click', () => {
+          state.acFilter = new Set([name]);
+          state.mtFilter = new Set();
+          updateFilterChip();
+          navigate('catalog');
+          catalogPager.reset();
+        });
+        return row;
+      }));
+    }
+
+    /* ==========================================================
+       Teknisyen notları
+       ========================================================== */
+
+    function createNoteRow(part) {
+      state.partsById.set(part.id, part);
+
+      const row = h('button', 'list-row');
+      row.type = 'button';
+      const main = h('span', 'list-main');
+      main.append(
+        h('span', 'list-title', part.material_desc || part.part_number),
+        h('span', 'list-sub', `${part.part_number} · ${formatDate(part.created_at)}`),
+        h('span', 'note-text', part.teknisyen_agzi)
+      );
+      const chev = h('span', 'chev');
+      chev.innerHTML = svg(ICONS.chevron);
+      row.append(main, chev);
+      row.addEventListener('click', () => openDetail(part.id));
+      return row;
+    }
+
+    /* ==========================================================
+       Parça detayı
+       ========================================================== */
+
+    function openDetail(id) {
+      const part = state.partsById.get(id);
+      if (!part) return;
+      state.detailId = id;
+
+      setImage(els.detailImg, part.image_url);
+      els.detailTitle.textContent = part.material_desc || part.part_number;
+      els.detailPn.textContent = part.material_desc ? part.part_number : '';
+
+      const fields = [
+        ['Uçak tipi', part.ac_type],
+        ['Malzeme tipi', part.material_type],
+        ['Teknisyen ağzı', part.teknisyen_agzi],
+        ['Notlar', part.notes],
+        ['Eklenme tarihi', formatDate(part.created_at)],
+      ];
+      els.detailFields.replaceChildren(...fields.flatMap(([key, value]) => [
+        h('dt', null, key),
+        h('dd', null, value || '—'),
+      ]));
+
+      els.detailSheet.showModal();
+    }
+
+    /* ==========================================================
+       Parça ekle / düzenle formu
+       ========================================================== */
+
+    let previewBlobUrl = null;
+
+    function showPreview(src) {
+      setImage(els.preview, src);
+      els.previewWrap.hidden = false;
+    }
+
+    function clearPreviewBlob() {
+      if (previewBlobUrl) {
+        URL.revokeObjectURL(previewBlobUrl);
+        previewBlobUrl = null;
+      }
+    }
+
+    function openForm(part = null) {
+      if (state.view !== 'form') state.prevView = state.view;
+      state.editing = part;
+
+      const form = els.partForm;
+      form.reset();
+      clearPreviewBlob();
+
+      if (part) {
+        ['part_number', 'ac_type', 'material_type', 'material_desc', 'teknisyen_agzi', 'notes'].forEach((name) => {
+          form.elements[name].value = part[name] ?? '';
+        });
+        showPreview(part.image_url);
+      } else {
+        els.previewWrap.hidden = true;
+      }
+
+      els.formHint.textContent = part ? 'Yeni görsel seçilmezse mevcut görsel korunur.' : '';
+      navigate('form', part ? 'Parçayı Düzenle' : 'Yeni Parça');
+    }
+
+    function onImageChange(event) {
+      const file = event.target.files[0];
+      clearPreviewBlob();
+      if (!file) {
+        if (state.editing) showPreview(state.editing.image_url);
+        else els.previewWrap.hidden = true;
+        return;
+      }
+      previewBlobUrl = URL.createObjectURL(file);
+      showPreview(previewBlobUrl);
+    }
+
+    function setSaving(saving) {
+      els.saveBtn.disabled = saving;
+      els.saveBtn.textContent = saving ? 'Kaydediliyor…' : 'Kaydet';
+    }
+
+    async function uploadImage(file) {
+      const name = `${Date.now()}_${Math.random().toString(36).slice(2, 9)}.${IMAGE_EXT[file.type]}`;
+      const { error } = await sb.storage.from(BUCKET).upload(name, file, { contentType: file.type });
+      if (error) throw error;
+      return sb.storage.from(BUCKET).getPublicUrl(name).data.publicUrl;
+    }
+
+    async function savePart(event) {
+      event.preventDefault();
+      const form = els.partForm;
+      const read = (name) => form.elements[name].value.trim() || null;
+
+      const payload = {
+        part_number: read('part_number'),
+        ac_type: read('ac_type'),
+        material_type: read('material_type'),
+        material_desc: read('material_desc'),
+        teknisyen_agzi: read('teknisyen_agzi'),
+        notes: read('notes'),
+      };
+
+      if (!payload.part_number || !payload.ac_type || !payload.material_type) {
+        toast('Parça no, uçak tipi ve malzeme tipi zorunludur.');
+        return;
+      }
+
+      const file = form.elements.image.files[0] || null;
+      if (file && (!IMAGE_EXT[file.type] || file.size > MAX_IMAGE_BYTES)) {
+        toast('Görsel JPG, PNG veya WEBP olmalı ve 5 MB’ı geçmemelidir.');
+        return;
+      }
+
+      const editing = state.editing;
+      setSaving(true);
+      try {
+        payload.image_url = editing?.image_url ?? null;
+        if (file) payload.image_url = await uploadImage(file);
+
+        if (editing) {
+          const { data, error } = await sb.from('parts').update(payload).eq('id', editing.id).select('id');
+          if (error) throw error;
+          if (!data.length) throw new Error('Kayıt güncellenemedi.');
+          toast('Parça güncellendi.');
+        } else {
+          const { error } = await sb.from('parts').insert([payload]);
+          if (error) throw error;
+          toast('Parça başarıyla eklendi!');
+        }
+
+        state.editing = null;
+        await loadMeta();
+        catalogPager.reset();
+        navigate(state.prevView || 'catalog');
+      } catch (err) {
+        toast(errorMessage(err));
+      } finally {
+        setSaving(false);
+      }
+    }
+
+    /* ==========================================================
+       Gezinme
+       ========================================================== */
+
+    function navigate(name, title) {
+      state.view = name;
+      document.querySelectorAll('.view').forEach((v) => {
+        v.classList.toggle('active', v.dataset.view === name);
+      });
+
+      els.pageTitle.textContent = title || TITLES[name];
+
+      const isForm = name === 'form';
+      setIcon(els.menuBtn, isForm ? 'back' : 'menu');
+      els.menuBtn.setAttribute('aria-label', isForm ? 'Geri' : 'Menü');
+
+      const activeNav = isForm ? (state.editing ? '' : 'add') : name;
+      document.querySelectorAll('.nav-btn').forEach((b) => {
+        b.classList.toggle('active', b.dataset.nav === activeNav);
+      });
+
+      if (name === 'types') renderTypes();
+      if (name === 'notes') notesPager.reset();
+      if (name === 'settings') checkConnection();
+    }
+
+    function goBack() {
+      navigate(state.prevView || 'catalog');
+    }
+
+    function goTo(nav) {
+      if (nav === 'add') openForm(null);
+      else navigate(nav);
+    }
+
+    /* ==========================================================
+       Ayarlar
+       ========================================================== */
+
+    function setTheme(theme) {
+      state.theme = theme;
+      prefs.set('theme', theme);
+      document.documentElement.dataset.theme = theme;
+      document.querySelectorAll('[data-theme-set]').forEach((b) => {
+        b.setAttribute('aria-pressed', String(b.dataset.themeSet === theme));
+      });
+    }
+
+    async function checkConnection() {
+      const host = new URL(SUPABASE_URL).host;
+      els.connDot.className = 'dot';
+      els.connStatus.textContent = 'Kontrol ediliyor…';
+      els.connDetail.textContent = host;
+
+      const { count, error } = await sb.from('parts').select('id', { count: 'exact', head: true });
+      if (error) {
+        els.connDot.classList.add('bad');
+        els.connStatus.textContent = 'Bağlantı yok';
+        els.connDetail.textContent = errorMessage(error);
+        return;
+      }
+      els.connDot.classList.add('ok');
+      els.connStatus.textContent = 'Bağlı';
+      els.connDetail.textContent = `${count ?? 0} kayıt · ${host}`;
+    }
+
+    /* ==========================================================
+       Olaylar ve başlangıç
+       ========================================================== */
+
+    function bindEvents() {
+      // Arama: yazarken anında (200 ms gecikmeyle) sorgu çalışır
+      let searchTimer = null;
+      els.search.addEventListener('input', () => {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => {
+          state.search = els.search.value.trim();
+          catalogPager.reset();
+        }, 200);
+      });
+
+      // Sıralama: alan seçilir, aynı alan tekrar seçilince yön değişir
+      els.sortMenu.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-sort]');
+        if (!btn) return;
+        const field = btn.dataset.sort;
+        if (field === state.sortField) {
+          state.sortAsc = !state.sortAsc;
+        } else {
+          state.sortField = field;
+          state.sortAsc = SORT_FIELDS[field].asc;
+        }
+        els.sortDropdown.open = false;
+        updateSortUI();
+        catalogPager.reset();
+      });
+
+      document.addEventListener('click', (e) => {
+        if (els.sortDropdown.open && !els.sortDropdown.contains(e.target)) {
+          els.sortDropdown.open = false;
+        }
+      });
+
+      els.filterBtn.addEventListener('click', openFilterSheet);
+      els.filterApply.addEventListener('click', applyFilters);
+      els.filterClear.addEventListener('click', () => {
+        els.filterSheet.querySelectorAll('input:checked').forEach((i) => (i.checked = false));
+      });
+      els.filterChip.addEventListener('click', clearFilters);
+
+      els.gridBtn.addEventListener('click', () => setGridMode(nextGridMode()));
+      new ResizeObserver(() => applyGridLayout()).observe(els.gridWrap);
+
+      els.menuBtn.addEventListener('click', () => {
+        if (state.view === 'form') goBack();
+        else els.menuSheet.showModal();
+      });
+
+      document.querySelectorAll('.nav-btn').forEach((b) => {
+        b.addEventListener('click', () => goTo(b.dataset.nav));
+      });
+
+      document.querySelectorAll('[data-nav-sheet]').forEach((b) => {
+        b.addEventListener('click', () => {
+          els.menuSheet.close();
+          goTo(b.dataset.navSheet);
+        });
+      });
+
+      document.querySelectorAll('[data-close]').forEach((b) => {
+        b.addEventListener('click', () => b.closest('dialog').close());
+      });
+
+      els.detailEdit.addEventListener('click', () => {
+        const part = state.partsById.get(state.detailId);
+        els.detailSheet.close();
+        if (part) openForm(part);
+      });
+
+      els.partForm.addEventListener('submit', savePart);
+      els.partForm.elements.image.addEventListener('change', onImageChange);
+
+      document.querySelectorAll('[data-theme-set]').forEach((b) => {
+        b.addEventListener('click', () => setTheme(b.dataset.themeSet));
+      });
+      document.querySelectorAll('[data-grid-set]').forEach((b) => {
+        b.addEventListener('click', () => setGridMode(b.dataset.gridSet));
+      });
+      els.connRefresh.addEventListener('click', checkConnection);
+    }
+
+    function init() {
+      document.querySelectorAll('[data-icon]').forEach((el) => setIcon(el, el.dataset.icon));
+
+      if (!window.supabase) {
+        toast('Supabase kütüphanesi yüklenemedi. İnternet bağlantınızı kontrol edin.');
+        return;
+      }
+      sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+      setTheme(state.theme);
+      setGridMode(state.gridMode);
+      updateSortUI();
+      updateFilterChip();
+
+      catalogPager = new Pager({
+        root: els.gridWrap,
+        sentinel: els.gridSentinel,
+        fetchPage: async (from, size) => {
+          const { data, error, count } = await catalogQuery().range(from, from + size - 1);
+          if (error) throw error;
+          return { rows: data, count };
+        },
+        onReset: () => {
+          els.grid.replaceChildren();
+          setCount(null);
+        },
+        onPage: (rows, count) => {
+          setCount(count);
+          if (!count) {
+            els.grid.replaceChildren(h('p', 'empty', 'Bu kriterlere uygun parça bulunamadı.'));
+            return;
+          }
+          els.grid.append(...rows.map(createCard));
+        },
+      });
+
+      notesPager = new Pager({
+        root: els.notesWrap,
+        sentinel: els.notesSentinel,
+        fetchPage: async (from, size) => {
+          const { data, error, count } = await sb
+            .from('parts')
+            .select('*', { count: 'exact' })
+            .not('teknisyen_agzi', 'is', null)
+            .neq('teknisyen_agzi', '')
+            .order('created_at', { ascending: false })
+            .order('id', { ascending: false })
+            .range(from, from + size - 1);
+          if (error) throw error;
+          return { rows: data, count };
+        },
+        onReset: () => els.notesList.replaceChildren(),
+        onPage: (rows, count) => {
+          if (!count && !els.notesList.children.length) {
+            els.notesList.replaceChildren(h('p', 'empty', 'Teknisyen notu bulunan parça yok.'));
+            return;
+          }
+          els.notesList.append(...rows.map(createNoteRow));
+        },
+      });
+
+      bindEvents();
+      applyGridLayout();
+      catalogPager.reset();
+      loadMeta().catch((err) => toast(errorMessage(err)));
+    }
+
+    init();
+  </script>
+</body>
+</html>
