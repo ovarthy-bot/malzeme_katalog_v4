@@ -557,7 +557,7 @@
 
     .bottom-nav {
       display: grid;
-      grid-template-columns: repeat(5, 1fr);
+      grid-template-columns: repeat(3, 1fr);
       flex-shrink: 0;
       padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
       background: var(--surface);
@@ -876,10 +876,8 @@
       </main>
 
       <nav class="bottom-nav" aria-label="Ana menü">
-        <button class="nav-btn" type="button" data-nav="catalog" data-icon="home" aria-label="Katalog"></button>
-        <button class="nav-btn" type="button" data-nav="types" data-icon="plane" aria-label="Uçak Tipleri"></button>
         <button class="nav-btn" type="button" data-nav="add" data-icon="plus" aria-label="Parça Ekle"></button>
-        <button class="nav-btn" type="button" data-nav="notes" data-icon="notes" aria-label="Teknisyen Notları"></button>
+        <button class="nav-btn" type="button" data-nav="catalog" data-icon="home" aria-label="Katalog"></button>
         <button class="nav-btn" type="button" data-nav="settings" data-icon="gear" aria-label="Ayarlar"></button>
       </nav>
 
@@ -934,10 +932,8 @@
       <button class="icon-btn" type="button" data-close aria-label="Kapat" data-icon="close"></button>
     </div>
     <div class="sheet-body">
-      <button class="menu-item" type="button" data-nav-sheet="catalog"><span class="mi-icon" data-icon="home"></span>Katalog</button>
-      <button class="menu-item" type="button" data-nav-sheet="types"><span class="mi-icon" data-icon="plane"></span>Uçak Tipleri</button>
       <button class="menu-item" type="button" data-nav-sheet="add"><span class="mi-icon" data-icon="plus"></span>Parça Ekle</button>
-      <button class="menu-item" type="button" data-nav-sheet="notes"><span class="mi-icon" data-icon="notes"></span>Teknisyen Notları</button>
+      <button class="menu-item" type="button" data-nav-sheet="catalog"><span class="mi-icon" data-icon="home"></span>Katalog</button>
       <button class="menu-item" type="button" data-nav-sheet="settings"><span class="mi-icon" data-icon="gear"></span>Ayarlar</button>
     </div>
   </dialog>
