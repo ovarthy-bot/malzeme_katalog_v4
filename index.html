@@ -474,6 +474,19 @@
 
     .btn:disabled { opacity: .6; cursor: wait; }
 
+    .btn.danger {
+      color: var(--bad);
+      border-color: var(--bad);
+    }
+
+    .btn.danger-fill {
+      background: var(--bad);
+      border-color: var(--bad);
+      color: #fff;
+    }
+
+    .confirm-text { margin: 0; font-size: 15px; line-height: 1.5; }
+
     /* ---------- Ayarlar ---------- */
 
     .settings { padding: 16px; display: flex; flex-direction: column; gap: 16px; }
@@ -886,8 +899,8 @@
       <p id="detailPn" class="detail-pn"></p>
       <dl id="detailFields" class="fields"></dl>
       <div class="sheet-actions">
+        <button id="detailDelete" class="btn danger" type="button">Sil</button>
         <button id="detailEdit" class="btn primary" type="button">Düzenle</button>
-        <button class="btn" type="button" data-close>Kapat</button>
       </div>
     </div>
   </dialog>
@@ -926,6 +939,20 @@
       <button class="menu-item" type="button" data-nav-sheet="add"><span class="mi-icon" data-icon="plus"></span>Parça Ekle</button>
       <button class="menu-item" type="button" data-nav-sheet="notes"><span class="mi-icon" data-icon="notes"></span>Teknisyen Notları</button>
       <button class="menu-item" type="button" data-nav-sheet="settings"><span class="mi-icon" data-icon="gear"></span>Ayarlar</button>
+    </div>
+  </dialog>
+
+  <!-- Silme onayı -->
+  <dialog id="confirmSheet" class="sheet" aria-labelledby="confirmTitle">
+    <div class="sheet-head">
+      <h2 id="confirmTitle">Emin misiniz?</h2>
+    </div>
+    <div class="sheet-body">
+      <p id="confirmText" class="confirm-text"></p>
+      <div class="sheet-actions">
+        <button class="btn" type="button" data-close>Vazgeç</button>
+        <button id="confirmOk" class="btn danger-fill" type="button">Sil</button>
+      </div>
     </div>
   </dialog>
 
@@ -1682,6 +1709,68 @@
       if (name === 'settings') checkConnection();
     }
 
+    /* ==========================================================
+       Silme
+       ========================================================== */
+
+    // Onay penceresi: "Sil" ile true, "Vazgeç"/kapatma ile false döner
+    function askConfirm(message) {
+      els.confirmText.textContent = message;
+      return new Promise((resolve) => {
+        const onOk = () => {
+          els.confirmSheet.close();
+          resolve(true);
+        };
+        const onClose = () => {
+          els.confirmOk.removeEventListener('click', onOk);
+          resolve(false);
+        };
+        els.confirmOk.addEventListener('click', onOk, { once: true });
+        els.confirmSheet.addEventListener('close', onClose, { once: true });
+        els.confirmSheet.showModal();
+      });
+    }
+
+    // Public URL'den bucket içindeki dosya yolunu çıkarır ve siler (hata olursa parça silme işlemini bozmaz)
+    async function removeImage(url) {
+      const marker = `/${BUCKET}/`;
+      const index = url ? url.indexOf(marker) : -1;
+      if (index === -1) return;
+      const path = decodeURIComponent(url.slice(index + marker.length).split('?')[0]);
+      try {
+        const { error } = await sb.storage.from(BUCKET).remove([path]);
+        if (error) console.warn('Görsel silinemedi:', error.message);
+      } catch (err) {
+        console.warn('Görsel silinemedi:', err);
+      }
+    }
+
+    async function deletePart(part) {
+      const name = part.material_desc || part.part_number;
+      const ok = await askConfirm(`"${name}" parçası kalıcı olarak silinecek. Bu işlem geri alınamaz.`);
+      if (!ok) return;
+
+      els.detailDelete.disabled = true;
+      try {
+        const { data, error } = await sb.from('parts').delete().eq('id', part.id).select('id');
+        if (error) throw error;
+        if (!data.length) throw new Error('Silme yetkisi yok veya kayıt bulunamadı.');
+
+        await removeImage(part.image_url);
+        state.partsById.delete(part.id);
+        els.detailSheet.close();
+        toast('Parça silindi.');
+
+        await loadMeta();
+        catalogPager.reset();
+        if (state.view === 'notes') notesPager.reset();
+      } catch (err) {
+        toast(errorMessage(err));
+      } finally {
+        els.detailDelete.disabled = false;
+      }
+    }
+
     function goBack() {
       navigate(state.prevView || 'catalog');
     }
@@ -1787,6 +1876,11 @@
 
       document.querySelectorAll('[data-close]').forEach((b) => {
         b.addEventListener('click', () => b.closest('dialog').close());
+      });
+
+      els.detailDelete.addEventListener('click', () => {
+        const part = state.partsById.get(state.detailId);
+        if (part) deletePart(part);
       });
 
       els.detailEdit.addEventListener('click', () => {
