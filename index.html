@@ -413,7 +413,8 @@
     .field label { font-size: 13px; font-weight: 600; color: var(--muted); }
 
     .field input,
-    .field textarea {
+    .field textarea,
+    .field select {
       padding: 10px 12px;
       border: 1px solid var(--border);
       border-radius: 10px;
@@ -425,9 +426,21 @@
     }
 
     .field input:focus,
-    .field textarea:focus { border-color: var(--primary); }
+    .field textarea:focus,
+    .field select:focus { border-color: var(--primary); }
 
     .field textarea { min-height: 84px; resize: vertical; }
+
+    .field select {
+      appearance: none;
+      -webkit-appearance: none;
+      padding-right: 38px;
+      background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%237a8398' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+      background-size: 16px;
+      cursor: pointer;
+    }
 
     .field input[type="file"] { padding: 8px; font-size: 14px; }
 
@@ -772,14 +785,12 @@
 
               <div class="field">
                 <label for="f_ac_type">Uçak tipi *</label>
-                <input id="f_ac_type" name="ac_type" list="acList" maxlength="40" autocomplete="off" required>
-                <datalist id="acList"></datalist>
+                <select id="f_ac_type" name="ac_type" required></select>
               </div>
 
               <div class="field">
                 <label for="f_material_type">Malzeme tipi *</label>
-                <input id="f_material_type" name="material_type" list="mtList" maxlength="60" autocomplete="off" required>
-                <datalist id="mtList"></datalist>
+                <select id="f_material_type" name="material_type" required></select>
               </div>
 
               <div class="field">
@@ -799,7 +810,7 @@
 
               <div class="field">
                 <label for="f_image">Görsel</label>
-                <input id="f_image" name="image" type="file" accept="image/jpeg,image/png,image/webp">
+                <input id="f_image" name="image" type="file" accept="image/*">
                 <p id="formHint" class="hint"></p>
               </div>
 
@@ -928,8 +939,17 @@
     const SUPABASE_KEY = 'sb_publishable_EmbtWNix9l-WR-kVoaWwDA_oBV2h29Z';
     const BUCKET = 'part-images';
     const PAGE_SIZE = 30;
-    const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-    const IMAGE_EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
+    const AC_TYPES = ['A320', 'A330', 'B737', 'B787', 'Ortak'];
+    const MATERIAL_TYPES = ['Sarf', 'Komponent', 'Vida', 'Kimyasal', 'KKD'];
+    const LAST_CHOICE_KEYS = { ac_type: 'lastAcType', material_type: 'lastMaterialType' };
+
+    // Görsel sıkıştırma: Supabase'e 5 MB sınırı sunucu tarafında kalır, istemci hedefi çok altındadır
+    const IMAGE_MAX_INPUT_BYTES = 50 * 1024 * 1024;
+    const IMAGE_MAX_SIDE = 1280;
+    const IMAGE_TARGET_BYTES = 400 * 1024;
+    const IMAGE_QUALITY_STEPS = [0.85, 0.75, 0.65, 0.55];
+    const IMAGE_SCALE_STEP = 0.75;
+    const IMAGE_MAX_PASSES = 4;
 
     const GRID_MODES = {
       '1x1': { rows: 1, cols: 1 },
@@ -1004,6 +1024,7 @@
       acCounts: new Map(),
       mtValues: [],
       editing: null,
+      pendingImage: null,
       detailId: null,
       partsById: new Map(),
     };
@@ -1093,17 +1114,29 @@
       }
       state.acCounts = counts;
       state.mtValues = [...materials].sort(trSort);
-      fillDatalists();
     }
 
-    function fillDatalists() {
-      const toOption = (value) => {
-        const o = h('option');
-        o.value = value;
-        return o;
+    // Uçak tipi ve malzeme tipi seçenekleri sabit listeden gelir
+    function fillSelects() {
+      const fill = (select, values) => {
+        select.replaceChildren(new Option('Seçiniz', ''), ...values.map((v) => new Option(v, v)));
       };
-      els.acList.replaceChildren(...[...state.acCounts.keys()].sort(trSort).map(toOption));
-      els.mtList.replaceChildren(...state.mtValues.map(toOption));
+      fill(els.f_ac_type, AC_TYPES);
+      fill(els.f_material_type, MATERIAL_TYPES);
+    }
+
+    // Listede olmayan eski bir değer düzenlenirken kaybolmasın diye geçici seçenek olarak eklenir
+    function setSelectValue(select, value) {
+      if (value && ![...select.options].some((o) => o.value === value)) {
+        select.append(new Option(value, value));
+      }
+      select.value = value || '';
+    }
+
+    function lastChoice(name) {
+      const allowed = name === 'ac_type' ? AC_TYPES : MATERIAL_TYPES;
+      const saved = prefs.get(LAST_CHOICE_KEYS[name], '');
+      return allowed.includes(saved) ? saved : '';
     }
 
     function searchTerm() {
@@ -1404,17 +1437,27 @@
     function openForm(part = null) {
       if (state.view !== 'form') state.prevView = state.view;
       state.editing = part;
+      state.pendingImage = null;
+      imageJob++;
 
       const form = els.partForm;
       form.reset();
       clearPreviewBlob();
+      fillSelects();
+      els.saveBtn.disabled = false;
+      els.saveBtn.textContent = 'Kaydet';
 
       if (part) {
-        ['part_number', 'ac_type', 'material_type', 'material_desc', 'teknisyen_agzi', 'notes'].forEach((name) => {
+        ['part_number', 'material_desc', 'teknisyen_agzi', 'notes'].forEach((name) => {
           form.elements[name].value = part[name] ?? '';
         });
+        setSelectValue(form.elements.ac_type, part.ac_type);
+        setSelectValue(form.elements.material_type, part.material_type);
         showPreview(part.image_url);
       } else {
+        // Yeni parçada son seçilen değerler otomatik gelir
+        form.elements.ac_type.value = lastChoice('ac_type');
+        form.elements.material_type.value = lastChoice('material_type');
         els.previewWrap.hidden = true;
       }
 
@@ -1422,16 +1465,135 @@
       navigate('form', part ? 'Parçayı Düzenle' : 'Yeni Parça');
     }
 
-    function onImageChange(event) {
-      const file = event.target.files[0];
+    let imageJob = 0;
+
+    function restoreImagePreview() {
       clearPreviewBlob();
+      if (state.editing) showPreview(state.editing.image_url);
+      else els.previewWrap.hidden = true;
+    }
+
+    // Görsel seçildiği anda cihazda sıkıştırılır; kaydet sırasında sadece küçük dosya gönderilir
+    async function onImageChange(event) {
+      const input = event.target;
+      const file = input.files[0];
+      const job = ++imageJob;
+      state.pendingImage = null;
+      els.formHint.textContent = '';
+
       if (!file) {
-        if (state.editing) showPreview(state.editing.image_url);
-        else els.previewWrap.hidden = true;
+        restoreImagePreview();
         return;
       }
+
+      if (!file.type.startsWith('image/')) {
+        input.value = '';
+        toast('Lütfen bir görsel dosyası seçin.');
+        restoreImagePreview();
+        return;
+      }
+
+      if (file.size > IMAGE_MAX_INPUT_BYTES) {
+        input.value = '';
+        toast('Seçilen dosya çok büyük (en fazla 50 MB).');
+        restoreImagePreview();
+        return;
+      }
+
+      clearPreviewBlob();
       previewBlobUrl = URL.createObjectURL(file);
       showPreview(previewBlobUrl);
+      els.saveBtn.disabled = true;
+      els.saveBtn.textContent = 'Görsel hazırlanıyor…';
+
+      try {
+        const blob = await compressImage(file);
+        if (job !== imageJob) return;
+        state.pendingImage = blob;
+        els.formHint.textContent = `Görsel ${formatSize(file.size)} → ${formatSize(blob.size)} olarak optimize edildi.`;
+      } catch (err) {
+        if (job !== imageJob) return;
+        input.value = '';
+        toast('Görsel okunamadı. Farklı bir dosya deneyin.');
+        restoreImagePreview();
+      } finally {
+        if (job === imageJob) {
+          els.saveBtn.disabled = false;
+          els.saveBtn.textContent = 'Kaydet';
+        }
+      }
+    }
+
+    // Tarayıcının yerleşik özellikleriyle (createImageBitmap / Canvas) görseli küçültür
+    async function decodeImage(file) {
+      if (window.createImageBitmap) {
+        try {
+          const bitmap = await createImageBitmap(file);
+          return { source: bitmap, cleanup: () => bitmap.close() };
+        } catch {
+          // Tarayıcı bu biçimi doğrudan çözemezse <img> ile denenir
+        }
+      }
+      const url = URL.createObjectURL(file);
+      const img = await new Promise((resolve, reject) => {
+        const el = new Image();
+        el.onload = () => resolve(el);
+        el.onerror = () => reject(new Error('Görsel çözümlenemedi.'));
+        el.src = url;
+      }).catch((err) => {
+        URL.revokeObjectURL(url);
+        throw err;
+      });
+      return { source: img, cleanup: () => URL.revokeObjectURL(url) };
+    }
+
+    function canvasToBlob(canvas, quality) {
+      return new Promise((resolve, reject) => {
+        canvas.toBlob(
+          (blob) => (blob ? resolve(blob) : reject(new Error('Görsel sıkıştırılamadı.'))),
+          'image/jpeg',
+          quality
+        );
+      });
+    }
+
+    async function compressImage(file) {
+      const { source, cleanup } = await decodeImage(file);
+      try {
+        const srcW = source.naturalWidth || source.width;
+        const srcH = source.naturalHeight || source.height;
+        let scale = Math.min(1, IMAGE_MAX_SIDE / Math.max(srcW, srcH));
+        let blob = null;
+
+        for (let pass = 0; pass < IMAGE_MAX_PASSES; pass++) {
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, Math.round(srcW * scale));
+          canvas.height = Math.max(1, Math.round(srcH * scale));
+
+          const ctx = canvas.getContext('2d');
+          // Şeffaf PNG'ler JPEG'e çevrilince siyaha dönmesin diye beyaz zemin
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.imageSmoothingQuality = 'high';
+          ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+
+          // En yüksek kaliteden başlayıp hedefin altına inen ilk denemeyi al
+          for (const quality of IMAGE_QUALITY_STEPS) {
+            blob = await canvasToBlob(canvas, quality);
+            if (blob.size <= IMAGE_TARGET_BYTES) return blob;
+          }
+          scale *= IMAGE_SCALE_STEP;
+        }
+        return blob; // Hedefe ulaşılamazsa en küçük denemeyi kullan
+      } finally {
+        cleanup();
+      }
+    }
+
+    function formatSize(bytes) {
+      return bytes >= 1024 * 1024
+        ? `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+        : `${Math.round(bytes / 1024)} KB`;
     }
 
     function setSaving(saving) {
@@ -1439,9 +1601,9 @@
       els.saveBtn.textContent = saving ? 'Kaydediliyor…' : 'Kaydet';
     }
 
-    async function uploadImage(file) {
-      const name = `${Date.now()}_${Math.random().toString(36).slice(2, 9)}.${IMAGE_EXT[file.type]}`;
-      const { error } = await sb.storage.from(BUCKET).upload(name, file, { contentType: file.type });
+    async function uploadImage(blob) {
+      const name = `${Date.now()}_${Math.random().toString(36).slice(2, 9)}.jpg`;
+      const { error } = await sb.storage.from(BUCKET).upload(name, blob, { contentType: 'image/jpeg' });
       if (error) throw error;
       return sb.storage.from(BUCKET).getPublicUrl(name).data.publicUrl;
     }
@@ -1465,17 +1627,11 @@
         return;
       }
 
-      const file = form.elements.image.files[0] || null;
-      if (file && (!IMAGE_EXT[file.type] || file.size > MAX_IMAGE_BYTES)) {
-        toast('Görsel JPG, PNG veya WEBP olmalı ve 5 MB’ı geçmemelidir.');
-        return;
-      }
-
       const editing = state.editing;
       setSaving(true);
       try {
         payload.image_url = editing?.image_url ?? null;
-        if (file) payload.image_url = await uploadImage(file);
+        if (state.pendingImage) payload.image_url = await uploadImage(state.pendingImage);
 
         if (editing) {
           const { data, error } = await sb.from('parts').update(payload).eq('id', editing.id).select('id');
@@ -1489,6 +1645,7 @@
         }
 
         state.editing = null;
+        state.pendingImage = null;
         await loadMeta();
         catalogPager.reset();
         navigate(state.prevView || 'catalog');
@@ -1640,6 +1797,11 @@
 
       els.partForm.addEventListener('submit', savePart);
       els.partForm.elements.image.addEventListener('change', onImageChange);
+      ['ac_type', 'material_type'].forEach((name) => {
+        els.partForm.elements[name].addEventListener('change', (e) => {
+          prefs.set(LAST_CHOICE_KEYS[name], e.target.value);
+        });
+      });
 
       document.querySelectorAll('[data-theme-set]').forEach((b) => {
         b.addEventListener('click', () => setTheme(b.dataset.themeSet));
@@ -1711,6 +1873,7 @@
         },
       });
 
+      fillSelects();
       bindEvents();
       applyGridLayout();
       catalogPager.reset();
