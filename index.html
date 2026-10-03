@@ -1079,12 +1079,26 @@
 
     const savedFilters = loadSavedFilters();
 
+    // Son kullanılan sıralama (alan ve yön) cihazda saklanır
+    function loadSavedSort() {
+      try {
+        const saved = JSON.parse(prefs.get('sort', 'null')) || {};
+        const field = SORT_FIELDS[saved.field] ? saved.field : 'created_at';
+        const asc = typeof saved.asc === 'boolean' ? saved.asc : SORT_FIELDS[field].asc;
+        return { field, asc };
+      } catch {
+        return { field: 'created_at', asc: false };
+      }
+    }
+
+    const savedSort = loadSavedSort();
+
     const state = {
       view: 'catalog',
       prevView: 'catalog',
       search: '',
-      sortField: 'created_at',
-      sortAsc: false,
+      sortField: savedSort.field,
+      sortAsc: savedSort.asc,
       acFilter: new Set(savedFilters.ac),
       mtFilter: new Set(savedFilters.mt),
       gridMode: prefs.get('gridMode', '2x3'),
@@ -1353,6 +1367,7 @@
         btn.querySelector('.arrow').textContent = active ? (state.sortAsc ? '↑' : '↓') : '';
       });
       els.sortInfo.textContent = `${SORT_FIELDS[state.sortField].label} ${state.sortAsc ? '↑' : '↓'}`;
+      prefs.set('sort', JSON.stringify({ field: state.sortField, asc: state.sortAsc }));
     }
 
     // Çipi, filtre butonunu ve kayıtlı filtreleri filtre durumuna göre günceller
