@@ -689,6 +689,24 @@
     .detail-title { margin: 0; font-size: 20px; }
     .detail-pn { margin: 0; font-size: 14px; color: var(--muted); }
 
+    .detail-pn-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .copy-btn {
+      min-width: 32px;
+      height: 32px;
+      padding: 0;
+      border: 0;
+      border-radius: 8px;
+      background: var(--surface-2);
+      font-size: 16px;
+      line-height: 1;
+      cursor: pointer;
+    }
+
     dl.fields {
       display: grid;
       grid-template-columns: auto 1fr;
@@ -916,7 +934,10 @@
     <div class="sheet-body">
       <div class="detail-img"><img id="detailImg" alt=""></div>
       <h2 id="detailTitle" class="detail-title"></h2>
-      <p id="detailPn" class="detail-pn"></p>
+      <div class="detail-pn-row">
+        <p id="detailPn" class="detail-pn"></p>
+        <button id="copyPn" class="copy-btn" type="button" title="Parça numarasını kopyala" aria-label="Parça numarasını kopyala">📑</button>
+      </div>
       <dl id="detailFields" class="fields"></dl>
       <div class="sheet-actions">
         <button id="detailDelete" class="btn danger" type="button">Sil</button>
@@ -1478,14 +1499,44 @@
        Parça detayı
        ========================================================== */
 
+    // Parça numarasını panoya kopyalar; sonucu butonun simgesinde gösterir (detay penceresi modal olduğu için toast arkada kalır)
+    async function copyPartNumber() {
+      const part = state.partsById.get(state.detailId);
+      if (!part) return;
+
+      let ok = false;
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(part.part_number);
+          ok = true;
+        } else {
+          // Güvenli olmayan bağlamlarda (ör. yerel dosya) eski yöntem; metin modal içinde seçilir
+          const area = h('textarea');
+          area.value = part.part_number;
+          area.setAttribute('readonly', '');
+          area.style.position = 'fixed';
+          area.style.opacity = '0';
+          els.detailSheet.append(area);
+          area.select();
+          ok = document.execCommand('copy');
+          area.remove();
+        }
+      } catch {
+        ok = false;
+      }
+
+      els.copyPn.textContent = ok ? '✓' : '✕';
+      setTimeout(() => (els.copyPn.textContent = '📑'), 1500);
+    }
+
     function openDetail(id) {
       const part = state.partsById.get(id);
       if (!part) return;
       state.detailId = id;
 
       setImage(els.detailImg, part.image_url);
-      els.detailTitle.textContent = part.material_desc || part.part_number;
-      els.detailPn.textContent = part.material_desc ? part.part_number : '';
+      els.detailTitle.textContent = part.material_desc || 'Açıklama girilmemiş';
+      els.detailPn.textContent = part.part_number;
 
       const fields = [
         ['Uçak tipi', part.ac_type],
@@ -1929,6 +1980,8 @@
       document.querySelectorAll('[data-close]').forEach((b) => {
         b.addEventListener('click', () => b.closest('dialog').close());
       });
+
+      els.copyPn.addEventListener('click', copyPartNumber);
 
       els.detailDelete.addEventListener('click', () => {
         const part = state.partsById.get(state.detailId);
