@@ -218,7 +218,38 @@
 
     .icon-btn::-webkit-details-marker { display: none; }
 
-    .icon-btn[aria-pressed="true"] { color: var(--primary); }
+    /* Filtre uygulanmışsa filtre butonu dolu renkle görünür */
+    .icon-btn[aria-pressed="true"] {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: #fff;
+    }
+
+    .sort-pills { display: flex; gap: 6px; }
+
+    .sort-pill {
+      flex: 1;
+      height: 34px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--surface);
+      color: var(--muted);
+      font: inherit;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .sort-pill.active {
+      border-color: var(--primary);
+      color: var(--primary);
+      font-weight: 600;
+    }
+
+    .sort-pill .arrow { font-weight: 700; }
 
     .dropdown { position: relative; }
 
@@ -745,15 +776,6 @@
           <div class="toolbar">
             <input id="search" class="search" type="search" placeholder="Parça no, ad veya not ara…" autocomplete="off" aria-label="Parça ara">
 
-            <details id="sortDropdown" class="dropdown">
-              <summary class="icon-btn" aria-label="Sırala" title="Sırala" data-icon="sliders"></summary>
-              <div id="sortMenu" class="menu">
-                <button type="button" data-sort="part_number">Parça No <span class="arrow"></span></button>
-                <button type="button" data-sort="material_desc">Ad <span class="arrow"></span></button>
-                <button type="button" data-sort="created_at">Tarih <span class="arrow"></span></button>
-              </div>
-            </details>
-
             <button id="filterBtn" class="icon-btn" type="button" aria-label="Filtrele" title="Filtrele" data-icon="funnel"></button>
             <button id="gridBtn" class="icon-btn" type="button" aria-label="Görünüm" title="Görünüm" data-icon="grid"></button>
           </div>
@@ -911,6 +933,14 @@
     </div>
     <div class="sheet-body">
       <div>
+        <h3>Sıralama</h3>
+        <div id="sortOptions" class="sort-pills">
+          <button type="button" class="sort-pill" data-sort="part_number">Parça No <span class="arrow"></span></button>
+          <button type="button" class="sort-pill" data-sort="material_desc">Ad <span class="arrow"></span></button>
+          <button type="button" class="sort-pill" data-sort="created_at">Tarih <span class="arrow"></span></button>
+        </div>
+      </div>
+      <div>
         <h3>Uçak tipi</h3>
         <div id="acOptions" class="pills"></div>
       </div>
@@ -1034,14 +1064,29 @@
       },
     };
 
+    // Son kullanılan filtreler (uçak tipi / malzeme tipi) cihazda saklanır
+    function loadSavedFilters() {
+      try {
+        const saved = JSON.parse(prefs.get('filters', 'null')) || {};
+        return {
+          ac: Array.isArray(saved.ac) ? saved.ac : [],
+          mt: Array.isArray(saved.mt) ? saved.mt : [],
+        };
+      } catch {
+        return { ac: [], mt: [] };
+      }
+    }
+
+    const savedFilters = loadSavedFilters();
+
     const state = {
       view: 'catalog',
       prevView: 'catalog',
       search: '',
       sortField: 'created_at',
       sortAsc: false,
-      acFilter: new Set(),
-      mtFilter: new Set(),
+      acFilter: new Set(savedFilters.ac),
+      mtFilter: new Set(savedFilters.mt),
       gridMode: prefs.get('gridMode', '2x3'),
       theme: prefs.get('theme', 'light'),
       acCounts: new Map(),
@@ -1302,7 +1347,7 @@
     }
 
     function updateSortUI() {
-      document.querySelectorAll('#sortMenu [data-sort]').forEach((btn) => {
+      document.querySelectorAll('#sortOptions [data-sort]').forEach((btn) => {
         const active = btn.dataset.sort === state.sortField;
         btn.classList.toggle('active', active);
         btn.querySelector('.arrow').textContent = active ? (state.sortAsc ? '↑' : '↓') : '';
@@ -1310,6 +1355,7 @@
       els.sortInfo.textContent = `${SORT_FIELDS[state.sortField].label} ${state.sortAsc ? '↑' : '↓'}`;
     }
 
+    // Çipi, filtre butonunu ve kayıtlı filtreleri filtre durumuna göre günceller
     function updateFilterChip() {
       const ac = [...state.acFilter];
       const mt = [...state.mtFilter];
@@ -1319,6 +1365,8 @@
       els.filterChip.textContent = text;
       els.filterChip.disabled = !active;
       els.filterChip.title = active ? 'Filtreleri temizle' : '';
+      els.filterBtn.setAttribute('aria-pressed', String(active));
+      prefs.set('filters', JSON.stringify({ ac, mt }));
     }
 
     function clearFilters() {
@@ -1822,8 +1870,8 @@
         }, 200);
       });
 
-      // Sıralama: alan seçilir, aynı alan tekrar seçilince yön değişir
-      els.sortMenu.addEventListener('click', (e) => {
+      // Sıralama (filtre menüsünde): aynı alan tekrar seçilince yön değişir
+      els.sortOptions.addEventListener('click', (e) => {
         const btn = e.target.closest('[data-sort]');
         if (!btn) return;
         const field = btn.dataset.sort;
@@ -1833,15 +1881,8 @@
           state.sortField = field;
           state.sortAsc = SORT_FIELDS[field].asc;
         }
-        els.sortDropdown.open = false;
         updateSortUI();
         catalogPager.reset();
-      });
-
-      document.addEventListener('click', (e) => {
-        if (els.sortDropdown.open && !els.sortDropdown.contains(e.target)) {
-          els.sortDropdown.open = false;
-        }
       });
 
       els.filterBtn.addEventListener('click', openFilterSheet);
