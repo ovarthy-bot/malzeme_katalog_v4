@@ -538,6 +538,13 @@
 
     .setting-card > span { font-weight: 600; font-size: 15px; }
 
+    .link-card {
+      text-decoration: none;
+      color: var(--text);
+    }
+
+    .link-card small { font-size: 13px; color: var(--muted); }
+
     .segmented {
       display: grid;
       grid-auto-flow: column;
@@ -933,6 +940,14 @@
               </div>
               <button id="connRefresh" class="btn" type="button">Yeniden kontrol et</button>
             </div>
+
+            <h3 class="section-title">Araçlar</h3>
+
+            <!-- Göreli bağlantı: hem yerel dosyada hem GitHub Pages'te aynı klasördeki import.html'i açar -->
+            <a class="setting-card link-card" href="import.html">
+              <span>Toplu görsel yükleme</span>
+              <small>Klasördeki görselleri parça numarasına göre yükleyin</small>
+            </a>
           </div>
         </section>
       </main>
