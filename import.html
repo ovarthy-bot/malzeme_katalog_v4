@@ -182,6 +182,7 @@
       <dl id="summary" class="summary"></dl>
       <p id="overwriteWarn" class="warn" hidden></p>
       <p id="emptyHint" class="warn" hidden></p>
+      <p id="capacityWarn" class="warn" hidden></p>
       <details>
         <summary>Yeni açılacak parçalar</summary>
         <ul id="newList"></ul>
@@ -223,6 +224,8 @@
     const SUPPORTED_RE = /\.(jpe?g|png|webp)$/i;
     const CONCURRENCY = 3;
     const INSERT_CHUNK = 100;
+    const DB_LIMIT_BYTES = 500 * 1024 * 1024; // Supabase ücretsiz plan veritabanı sınırı (500 MB)
+    const STORAGE_LIMIT_BYTES = 1024 * 1024 * 1024; // Supabase ücretsiz plan dosya depolama sınırı (1 GB)
 
     const IMAGE_MAX_SIDE = 1280;
     const IMAGE_TARGET_BYTES = 400 * 1024;
@@ -331,6 +334,22 @@
         rows.push(...data);
         if (data.length < 1000) return rows;
       }
+    }
+
+    // Veritabanı ve depolama boyutu (bayt). Fonksiyonlar için bkz. supabase/disk_usage.sql
+    // Biri okunamazsa yalnızca o değer null olur; diğeri yine gösterilir.
+    async function fetchUsage() {
+      const [db, storage] = await Promise.all(['get_db_size', 'get_storage_size'].map(async (fn) => {
+        try {
+          const { data, error } = await sb.rpc(fn);
+          if (error) throw error;
+          return Number(data);
+        } catch (err) {
+          console.warn(`${fn} çağrısı başarısız:`, err.message);
+          return null;
+        }
+      }));
+      return { db, storage };
     }
 
     function storagePath(url) {
@@ -454,7 +473,7 @@
        ========================================================== */
 
     // Dosyaları parça numarasına göre gruplar: mevcut parçalara ekle, yoksa yeni parça aç
-    function buildPlan({ rootFiles, subCount, parts, images, overwrite }) {
+    function buildPlan({ rootFiles, subCount, parts, images, overwrite, usage }) {
       const existingByKey = new Map(parts.map((p) => [keyOf(p.part_number), p]));
       const doneKeys = new Set(images.filter((i) => i.source_name).map((i) => `${i.part_id}|${i.source_name}`));
       const maxPosition = new Map();
@@ -470,6 +489,7 @@
         rootCount: rootFiles.length,
         subCount,
         overwrite,
+        usage,
       };
 
       const candidates = [];
@@ -513,10 +533,34 @@
       return result;
     }
 
+    const toMb = (bytes) => (bytes / (1024 * 1024)).toFixed(1);
+
+    // Kullanım satırı: "%13 (65.0 / 500 MB)"; okunamadıysa "Alınamadı"
+    function usageRow(label, bytes, limitBytes) {
+      if (bytes == null) return addRow(label, 'Alınamadı');
+      const percent = Math.round((bytes / limitBytes) * 100);
+      return addRow(label, `%${percent} (${toMb(bytes)} / ${toMb(limitBytes)} MB)`);
+    }
+
+    // Veritabanı ve depolama kullanımı; yüklemeden sonra kalan alanı tahmin eder
+    function capacityRows(usage, uploadBytes) {
+      const rows = [
+        usageRow('Veritabanı diski', usage.db, DB_LIMIT_BYTES),
+        usageRow('Görsel depolama', usage.storage, STORAGE_LIMIT_BYTES),
+      ];
+      if (usage.storage != null) {
+        const freeBytes = Math.max(0, STORAGE_LIMIT_BYTES - usage.storage);
+        rows.push(addRow('Kalan depolama', `${toMb(freeBytes)} MB`));
+        rows.push(addRow('Yüklemeden sonra kalan (en az)', `${toMb(freeBytes - uploadBytes)} MB`));
+      }
+      return rows.flat();
+    }
+
     function renderSummary(result) {
       const targets = [...result.targets.values()];
       const newTargets = targets.filter((t) => !t.existingId);
       const existingTargets = targets.filter((t) => t.existingId);
+      const uploadBytes = result.items.length * IMAGE_TARGET_BYTES; // Sıkıştırma sonrası en fazla boyut
 
       const rows = [
         ['Klasördeki dosya', result.rootCount],
@@ -526,9 +570,16 @@
         ['Zaten yüklü (atlanacak)', result.done.length],
         ['Desteklenmeyen format', result.skipped.length],
         ['Alt klasör dosyaları (dahil değil)', result.subCount],
-        ['Tahmini depolama (en fazla)', `${((result.items.length * IMAGE_TARGET_BYTES) / (1024 * 1024)).toFixed(1)} MB`],
+        ['Tahmini depolama (en fazla)', `${toMb(uploadBytes)} MB`],
       ];
-      els.summary.replaceChildren(...rows.flatMap(([label, value]) => addRow(label, value)));
+      els.summary.replaceChildren(
+        ...rows.flatMap(([label, value]) => addRow(label, value)),
+        ...capacityRows(result.usage, uploadBytes),
+      );
+
+      const storageFull = result.usage.storage != null && result.usage.storage + uploadBytes > STORAGE_LIMIT_BYTES;
+      els.capacityWarn.hidden = !storageFull;
+      els.capacityWarn.textContent = 'Bu yükleme depolama sınırını aşabilir; sığmayan görseller hata listesine düşer.';
 
       els.overwriteWarn.hidden = !(result.overwrite && existingTargets.length);
       els.overwriteWarn.textContent = `${existingTargets.length} mevcut parçanın görselleri silinip yeniden yüklenecek.`;
@@ -573,12 +624,13 @@
       els.summary.replaceChildren(...addRow('Durum', 'Taranıyor…'));
 
       try {
-        const [parts, images] = await Promise.all([
+        const [parts, images, usage] = await Promise.all([
           fetchAllRows('parts', 'id, part_number'),
           fetchAllRows('part_images', 'id, part_id, source_name, position'),
+          fetchUsage(), // Hata vermez; alınamayan değer önizlemede "Alınamadı" olur
         ]);
         if (token !== scanToken) return; // Daha yeni bir tarama başladı
-        plan = buildPlan({ rootFiles, subCount, parts, images, overwrite: els.overwrite.checked });
+        plan = buildPlan({ rootFiles, subCount, parts, images, overwrite: els.overwrite.checked, usage });
         renderSummary(plan);
       } catch (err) {
         if (token === scanToken) els.summary.replaceChildren(...addRow('Hata', errorMessage(err)));
