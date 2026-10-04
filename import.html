@@ -9,6 +9,7 @@
       --primary: #4a6fb5;
       --bg: #eef2f8;
       --surface: #ffffff;
+      --surface-2: #f4f6fb;
       --text: #1d2433;
       --muted: #7a8398;
       --border: #dde3ee;
@@ -62,6 +63,25 @@
     .hint { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.5; }
 
     .check { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+
+    .field { display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+    .field span { font-weight: 600; color: var(--muted); font-size: 13px; }
+
+    .field select {
+      height: 40px;
+      padding: 0 10px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface);
+      color: var(--text);
+      font: inherit;
+    }
+
+    .fields-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
 
     .btn {
       height: 44px;
@@ -128,9 +148,23 @@
       <h2>1. Klasörü seç</h2>
       <p class="hint">
         Dosya adı parça numarası olmalı, örneğin <b>HCB31-1195.jpg</b>. Aynı parçanın ek görselleri
-        <b>HCB31-1195 (1).jpg</b> ve <b>HCB31-1195 (2).jpg</b> şeklinde adlandırılır. Alt klasörler dahil edilmez.
+        <b>HCB31-1195 (1).jpg</b> ve <b>HCB31-1195 (2).jpg</b> şeklinde adlandırılır. Veritabanında olmayan
+        parça numaraları için yeni parça açılır. Alt klasörler dahil edilmez.
       </p>
       <input id="folderInput" type="file" webkitdirectory multiple>
+
+      <div class="fields-row">
+        <label class="field">
+          <span>Uçak tipi (yeni parçalar)</span>
+          <select id="acSelect"></select>
+        </label>
+        <label class="field">
+          <span>Malzeme tipi (yeni parçalar)</span>
+          <select id="mtSelect"></select>
+        </label>
+      </div>
+      <p class="hint">Bu iki alan yalnızca bu yüklemede açılan yeni parçalara yazılır. Boş bırakılabilir. Veritabanında zaten olan parçaların bu alanları değişmez.</p>
+
       <label class="check">
         <input id="overwrite" type="checkbox">
         Mevcut görselleri sil ve baştan yükle (üzerine yaz)
@@ -141,9 +175,10 @@
       <h2>2. Ön izleme</h2>
       <dl id="summary" class="summary"></dl>
       <p id="overwriteWarn" class="warn" hidden></p>
+      <p id="emptyHint" class="warn" hidden></p>
       <details>
-        <summary>Eşleşmeyen dosyalar</summary>
-        <ul id="unmatchedList"></ul>
+        <summary>Yeni açılacak parçalar</summary>
+        <ul id="newList"></ul>
       </details>
       <details>
         <summary>Atlanan dosyalar (desteklenmeyen format)</summary>
@@ -177,8 +212,11 @@
     const SUPABASE_URL = 'https://rkjnyexhnkiigvwnqvtx.supabase.co';
     const SUPABASE_KEY = 'sb_publishable_EmbtWNix9l-WR-kVoaWwDA_oBV2h29Z';
     const BUCKET = 'part-images';
+    const AC_TYPES = ['A320', 'A330', 'B737', 'B787', 'Ortak'];
+    const MATERIAL_TYPES = ['Sarf', 'Komponent', 'Vida', 'Kimyasal', 'KKD', 'Tool'];
     const SUPPORTED_RE = /\.(jpe?g|png|webp)$/i;
     const CONCURRENCY = 3;
+    const INSERT_CHUNK = 100;
 
     const IMAGE_MAX_SIDE = 1280;
     const IMAGE_TARGET_BYTES = 400 * 1024;
@@ -226,13 +264,12 @@
     }
 
     function fillList(list, names) {
-      list.replaceChildren(...(names.length
-        ? names.map((name) => {
-          const li = document.createElement('li');
-          li.textContent = name;
-          return li;
-        })
-        : [Object.assign(document.createElement('li'), { textContent: '—' })]));
+      const items = names.length ? names : ['—'];
+      list.replaceChildren(...items.map((name) => {
+        const li = document.createElement('li');
+        li.textContent = name;
+        return li;
+      }));
     }
 
     function renderFailures() {
@@ -250,6 +287,12 @@
       els.startBtn.disabled = busy;
       els.overwrite.disabled = busy;
       els.folderInput.disabled = busy;
+      els.acSelect.disabled = busy;
+      els.mtSelect.disabled = busy;
+    }
+
+    function fillSelectOptions(select, values) {
+      select.replaceChildren(new Option('Boş bırak', ''), ...values.map((v) => new Option(v, v)));
     }
 
     /* ==========================================================
@@ -391,9 +434,9 @@
        Tarama ve ön izleme
        ========================================================== */
 
-    // Dosyaları parça numarasıyla eşleştirir; yüklenecek, atlanacak ve eşleşmeyenleri ayırır
+    // Dosyaları parça numarasına göre gruplar: mevcut parçalara ekle, yoksa yeni parça aç
     function buildPlan({ rootFiles, subCount, parts, images, overwrite }) {
-      const partByKey = new Map(parts.map((p) => [keyOf(p.part_number), p]));
+      const existingByKey = new Map(parts.map((p) => [keyOf(p.part_number), p]));
       const doneKeys = new Set(images.filter((i) => i.source_name).map((i) => `${i.part_id}|${i.source_name}`));
       const maxPosition = new Map();
       for (const img of images) {
@@ -403,9 +446,8 @@
       const result = {
         items: [],
         skipped: [],
-        unmatched: [],
         done: [],
-        affectedParts: new Map(),
+        targets: new Map(), // parça numarası anahtarı -> { key, partNumber, existingId, nextPosition }
         rootCount: rootFiles.length,
         subCount,
         overwrite,
@@ -418,58 +460,79 @@
           continue;
         }
         const { partNumber, index } = parseFileName(file.name);
-        const part = partByKey.get(keyOf(partNumber));
-        if (!part) {
-          result.unmatched.push(file.name);
-          continue;
-        }
-        if (!overwrite && doneKeys.has(`${part.id}|${file.name}`)) {
+        const key = keyOf(partNumber);
+        const existing = existingByKey.get(key) ?? null;
+        if (existing && !overwrite && doneKeys.has(`${existing.id}|${file.name}`)) {
           result.done.push(file.name);
           continue;
         }
-        candidates.push({ file, part, partNumber, index });
+        candidates.push({ file, key, partNumber, index, existing });
       }
 
-      candidates.sort((a, b) => a.part.id - b.part.id || a.index - b.index || a.file.name.localeCompare(b.file.name, 'tr'));
+      candidates.sort((a, b) => a.key.localeCompare(b.key, 'tr') || a.index - b.index || a.file.name.localeCompare(b.file.name, 'tr'));
 
-      for (const candidate of candidates) {
-        const partId = candidate.part.id;
-        if (!result.affectedParts.has(partId)) {
-          // Üzerine yazılıyorsa sıra 0'dan başlar, aksi halde mevcut görsellerin arkasına eklenir
-          result.affectedParts.set(partId, {
-            part: candidate.part,
-            nextPosition: overwrite ? 0 : (maxPosition.get(partId) ?? -1) + 1,
+      for (const c of candidates) {
+        if (!result.targets.has(c.key)) {
+          const existingId = c.existing?.id ?? null;
+          result.targets.set(c.key, {
+            key: c.key,
+            partNumber: c.partNumber,
+            existingId,
+            // Üzerine yazılıyorsa sıra 0'dan, aksi halde mevcut görsellerin arkasından başlar
+            nextPosition: existingId && !overwrite ? (maxPosition.get(existingId) ?? -1) + 1 : 0,
           });
         }
-        const slot = result.affectedParts.get(partId);
-        result.items.push({ ...candidate, position: slot.nextPosition++ });
+        const target = result.targets.get(c.key);
+        result.items.push({
+          file: c.file,
+          key: c.key,
+          partNumber: target.partNumber,
+          position: target.nextPosition++,
+        });
       }
 
       return result;
     }
 
     function renderSummary(result) {
+      const targets = [...result.targets.values()];
+      const newTargets = targets.filter((t) => !t.existingId);
+      const existingTargets = targets.filter((t) => t.existingId);
+
       const rows = [
         ['Klasördeki dosya', result.rootCount],
         ['Yüklenecek dosya', result.items.length],
-        ['Etkilenen parça', result.affectedParts.size],
+        ['Yeni açılacak parça', newTargets.length],
+        ['Mevcut parçaya eklenecek', existingTargets.length],
         ['Zaten yüklü (atlanacak)', result.done.length],
-        ['Eşleşmeyen dosya', result.unmatched.length],
         ['Desteklenmeyen format', result.skipped.length],
         ['Alt klasör dosyaları (dahil değil)', result.subCount],
         ['Tahmini depolama (en fazla)', `${((result.items.length * IMAGE_TARGET_BYTES) / (1024 * 1024)).toFixed(1)} MB`],
       ];
       els.summary.replaceChildren(...rows.flatMap(([label, value]) => addRow(label, value)));
 
-      els.overwriteWarn.hidden = !result.overwrite;
-      els.overwriteWarn.textContent = result.overwrite
-        ? `${result.affectedParts.size} parçanın mevcut görselleri silinip yeniden yüklenecek.`
-        : '';
+      els.overwriteWarn.hidden = !(result.overwrite && existingTargets.length);
+      els.overwriteWarn.textContent = `${existingTargets.length} mevcut parçanın görselleri silinip yeniden yüklenecek.`;
 
-      fillList(els.unmatchedList, result.unmatched);
+      fillList(els.newList, newTargets.map((t) => t.partNumber));
       fillList(els.skippedList, result.skipped);
       fillList(els.doneList, result.done);
-      els.startBtn.disabled = result.items.length === 0;
+
+      const empty = result.items.length === 0;
+      els.emptyHint.hidden = !empty;
+      els.emptyHint.textContent = empty ? explainEmpty(result) : '';
+      els.startBtn.disabled = empty;
+    }
+
+    function explainEmpty(result) {
+      if (result.rootCount === 0 && result.subCount > 0) {
+        return 'Seçilen klasörün kökünde dosya yok; görseller alt klasörlerde. Görsellerin doğrudan bulunduğu klasörü seçin.';
+      }
+      if (result.rootCount === 0) return 'Seçilen klasörde dosya bulunamadı.';
+      if (!result.targets.size && !result.done.length) {
+        return 'Seçilen dosyaların hepsi desteklenmeyen formatta (yalnızca JPG, PNG, WEBP).';
+      }
+      return 'Yüklenecek yeni dosya kalmadı; tüm dosyalar zaten yüklü.';
     }
 
     async function scanFolder() {
@@ -507,10 +570,21 @@
        Yükleme
        ========================================================== */
 
-    async function importItem({ file, part, position }) {
+    function recordFailure(file, partNumber, message) {
+      failures.push({ file, partNumber, error: message });
+    }
+
+    // Bir parçaya ait tüm dosyaları hatalı olarak kaydeder
+    function recordKeyFailure(result, key, message) {
+      for (const item of result.items.filter((i) => i.key === key)) {
+        recordFailure(item.file.name, item.partNumber, message);
+      }
+    }
+
+    async function importItem(item, partId) {
       let blob;
       try {
-        blob = await compressImage(file);
+        blob = await compressImage(item.file);
       } catch {
         throw new Error('Görsel okunamadı (tarayıcı bu dosyayı açamadı).');
       }
@@ -522,15 +596,11 @@
 
       const { error } = await sb
         .from('part_images')
-        .insert([{ part_id: part.id, image_url: url, source_name: file.name, position }]);
+        .insert([{ part_id: partId, image_url: url, source_name: item.file.name, position: item.position }]);
       if (error) {
         await removeStorageFiles([url]); // Kayıt yazılamadıysa yüklenen dosyayı geri al
         throw error;
       }
-    }
-
-    function recordFailure(file, partNumber, message) {
-      failures.push({ file, partNumber, error: message });
     }
 
     async function runImport(result) {
@@ -540,31 +610,66 @@
       els.progressCard.hidden = false;
       renderFailures();
 
-      // 1) Üzerine yazma: etkilenen parçaların eski görsellerini temizle
-      const badParts = new Set();
+      const targets = [...result.targets.values()];
+      const ids = new Map(); // anahtar -> parça id
+      const badKeys = new Set();
+      for (const t of targets) {
+        if (t.existingId) ids.set(t.key, t.existingId);
+      }
+
+      // 1) Yeni parçaları aç (uçak tipi ve malzeme tipi seçilen değerlerle)
+      els.progressText.textContent = 'Yeni parçalar açılıyor…';
+      const created = targets.filter((t) => !t.existingId);
+      for (let i = 0; i < created.length; i += INSERT_CHUNK) {
+        const chunk = created.slice(i, i + INSERT_CHUNK);
+        const rows = chunk.map((t) => ({
+          part_number: t.partNumber,
+          ac_type: result.acType,
+          material_type: result.materialType,
+        }));
+        const { data, error } = await sb.from('parts').insert(rows).select('id, part_number');
+        if (error) {
+          for (const t of chunk) {
+            badKeys.add(t.key);
+            recordKeyFailure(result, t.key, `Parça açılamadı: ${errorMessage(error)}`);
+          }
+          continue;
+        }
+        for (const row of data) ids.set(keyOf(row.part_number), row.id);
+      }
+
+      // Açılamayan yeni parçalar: dosyaları hatalı olarak kaydet
+      for (const t of created) {
+        if (!ids.has(t.key) && !badKeys.has(t.key)) {
+          badKeys.add(t.key);
+          recordKeyFailure(result, t.key, 'Parça açılamadı.');
+        }
+      }
+
+      // 2) Üzerine yazma: mevcut parçaların eski görsellerini temizle
       if (result.overwrite) {
-        for (const { part } of result.affectedParts.values()) {
+        for (const t of targets.filter((t) => t.existingId)) {
           try {
-            await clearPartImages(part.id);
+            await clearPartImages(t.existingId);
           } catch (err) {
-            badParts.add(part.id);
-            for (const item of result.items.filter((i) => i.part.id === part.id)) {
-              recordFailure(item.file.name, item.partNumber, `Eski görseller silinemedi: ${errorMessage(err)}`);
-            }
+            badKeys.add(t.key);
+            recordKeyFailure(result, t.key, `Eski görseller silinemedi: ${errorMessage(err)}`);
           }
         }
       }
 
-      // 2) Yükleme: aynı anda birkaç dosya (CONCURRENCY)
-      const queue = result.items.filter((item) => !badParts.has(item.part.id));
+      // 3) Görselleri yükle: aynı anda birkaç dosya (CONCURRENCY)
+      const queue = result.items.filter((item) => !badKeys.has(item.key) && ids.has(item.key));
       let processed = total - queue.length;
-      let cursor = 0;
+      setProgress(processed, total);
+      els.progressText.textContent = `${processed} / ${total} dosya işlendi · ${failures.length} hata`;
 
+      let cursor = 0;
       const worker = async () => {
         while (cursor < queue.length) {
           const item = queue[cursor++];
           try {
-            await importItem(item);
+            await importItem(item, ids.get(item.key));
           } catch (err) {
             recordFailure(item.file.name, item.partNumber, errorMessage(err));
           }
@@ -574,13 +679,13 @@
       };
       await Promise.all(Array.from({ length: CONCURRENCY }, worker));
 
-      // 3) Kapak görselleri
-      for (const { part } of result.affectedParts.values()) {
-        if (badParts.has(part.id)) continue;
+      // 4) Kapak görselleri
+      for (const t of targets) {
+        if (badKeys.has(t.key) || !ids.has(t.key)) continue;
         try {
-          await syncPrimaryImage(part.id);
+          await syncPrimaryImage(ids.get(t.key));
         } catch (err) {
-          recordFailure('(kapak görseli)', part.part_number, errorMessage(err));
+          recordFailure('(kapak görseli)', t.partNumber, errorMessage(err));
         }
       }
 
@@ -608,17 +713,20 @@
        ========================================================== */
 
     els.folderInput.addEventListener('change', scanFolder);
-
     els.overwrite.addEventListener('change', scanFolder);
 
     els.startBtn.addEventListener('click', async () => {
       if (!plan || !plan.items.length) return;
 
+      // Seçimler yükleme anında okunur
+      plan.acType = els.acSelect.value || null;
+      plan.materialType = els.mtSelect.value || null;
+
       if (plan.overwrite) {
-        const ok = confirm(
-          `${plan.affectedParts.size} parçanın mevcut görselleri silinecek ve yeniden yüklenecek. Devam edilsin mi?`
-        );
-        if (!ok) return;
+        const existingCount = [...plan.targets.values()].filter((t) => t.existingId).length;
+        if (existingCount && !confirm(`${existingCount} mevcut parçanın görselleri silinecek ve yeniden yüklenecek. Devam edilsin mi?`)) {
+          return;
+        }
       }
 
       lockUI(true);
@@ -630,11 +738,13 @@
 
       // Üzerine yazma tek seferlik olsun; yeniden taramada yanlışlıkla tekrar silinmesin
       els.overwrite.checked = false;
-      els.csvBtn.hidden = failures.length === 0;
       await scanFolder();
     });
 
     els.csvBtn.addEventListener('click', downloadFailures);
+
+    fillSelectOptions(els.acSelect, AC_TYPES);
+    fillSelectOptions(els.mtSelect, MATERIAL_TYPES);
 
     if (!window.supabase) {
       els.previewCard.hidden = false;

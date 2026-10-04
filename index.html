@@ -1038,6 +1038,7 @@
     const AC_TYPES = ['A320', 'A330', 'B737', 'B787', 'Ortak'];
     const MATERIAL_TYPES = ['Sarf', 'Komponent', 'Vida', 'Kimyasal', 'KKD', 'Tool'];
     const LAST_CHOICE_KEYS = { ac_type: 'lastAcType', material_type: 'lastMaterialType' };
+    const NO_VALUE = '__none__'; // Filtrede "Belirtilmemiş" (alan boş) seçeneği
 
     // Görsel sıkıştırma: Supabase'e 5 MB sınırı sunucu tarafında kalır, istemci hedefi çok altındadır
     const IMAGE_MAX_INPUT_BYTES = 50 * 1024 * 1024;
@@ -1242,12 +1243,18 @@
       const rows = await fetchAll('ac_type, material_type');
       const counts = new Map();
       const materials = new Set();
+      let noAc = 0;
+      let noMt = 0;
       for (const r of rows) {
         if (r.ac_type) counts.set(r.ac_type, (counts.get(r.ac_type) || 0) + 1);
+        else noAc++;
         if (r.material_type) materials.add(r.material_type);
+        else noMt++;
       }
+      // Boş alanlı parçalar filtrede "Belirtilmemiş" olarak görünür (yalnızca varsa)
+      if (noAc) counts.set(NO_VALUE, noAc);
       state.acCounts = counts;
-      state.mtValues = [...materials].sort(trSort);
+      state.mtValues = [...(noMt ? [NO_VALUE] : []), ...[...materials].sort(trSort)];
     }
 
     // Uçak tipi ve malzeme tipi seçenekleri sabit listeden gelir
@@ -1278,10 +1285,26 @@
       return state.search.replace(/[(),"\\%*]/g, ' ').trim();
     }
 
+    // Değer listesi filtresi; "Belirtilmemiş" seçiliyse boş (NULL) alanları da kapsar
+    function applyListFilter(q, column, selected) {
+      const values = [...selected].filter((v) => v !== NO_VALUE);
+      const includeEmpty = selected.has(NO_VALUE);
+      if (includeEmpty && values.length) {
+        const list = values.map((v) => `"${v.replace(/"/g, '\\"')}"`).join(',');
+        return q.or(`${column}.is.null,${column}.in.(${list})`);
+      }
+      if (includeEmpty) return q.is(column, null);
+      return q.in(column, values);
+    }
+
+    function filterLabel(value) {
+      return value === NO_VALUE ? 'Belirtilmemiş' : value;
+    }
+
     function catalogQuery() {
       let q = sb.from('parts').select('*', { count: 'exact' });
-      if (state.acFilter.size) q = q.in('ac_type', [...state.acFilter]);
-      if (state.mtFilter.size) q = q.in('material_type', [...state.mtFilter]);
+      if (state.acFilter.size) q = applyListFilter(q, 'ac_type', state.acFilter);
+      if (state.mtFilter.size) q = applyListFilter(q, 'material_type', state.mtFilter);
 
       const term = searchTerm();
       if (term) {
@@ -1483,8 +1506,8 @@
       const ac = [...state.acFilter];
       const mt = [...state.mtFilter];
       const active = ac.length > 0 || mt.length > 0;
-      let text = `Filtre: ${ac.length ? ac.join(', ') : 'Tümü'}`;
-      if (mt.length) text += ` | ${mt.join(', ')}`;
+      let text = `Filtre: ${ac.length ? ac.map(filterLabel).join(', ') : 'Tümü'}`;
+      if (mt.length) text += ` | ${mt.map(filterLabel).join(', ')}`;
       els.filterChip.textContent = text;
       els.filterChip.disabled = !active;
       els.filterChip.title = active ? 'Filtreleri temizle' : '';
@@ -1500,7 +1523,9 @@
     }
 
     function openFilterSheet() {
-      buildPills(els.acOptions, [...state.acCounts.keys()].sort(trSort), state.acFilter, state.acCounts);
+      const acKeys = [...state.acCounts.keys()].filter((k) => k !== NO_VALUE).sort(trSort);
+      if (state.acCounts.has(NO_VALUE)) acKeys.unshift(NO_VALUE);
+      buildPills(els.acOptions, acKeys, state.acFilter, state.acCounts);
       buildPills(els.mtOptions, state.mtValues, state.mtFilter);
       els.filterSheet.showModal();
     }
@@ -1512,7 +1537,7 @@
         input.type = 'checkbox';
         input.value = v;
         input.checked = selected.has(v);
-        label.append(input, document.createTextNode(v));
+        label.append(input, document.createTextNode(filterLabel(v)));
         if (counts) label.append(h('small', null, `(${counts.get(v)})`));
         return label;
       }));
@@ -1535,7 +1560,9 @@
        ========================================================== */
 
     function renderTypes() {
-      const entries = [...state.acCounts.entries()].sort((a, b) => trSort(a[0], b[0]));
+      const entries = [...state.acCounts.entries()]
+        .filter(([name]) => name !== NO_VALUE)
+        .sort((a, b) => trSort(a[0], b[0]));
       if (!entries.length) {
         els.typesList.replaceChildren(h('p', 'empty', 'Henüz uçak tipi yok.'));
         return;
