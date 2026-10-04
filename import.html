@@ -169,6 +169,12 @@
         <input id="overwrite" type="checkbox">
         Mevcut görselleri sil ve baştan yükle (üzerine yaz)
       </label>
+
+      <label class="field">
+        <span>Açıklama listesi (isteğe bağlı)</span>
+        <textarea id="descInput" rows="4" placeholder="Excel'de parça no ve açıklama sütunlarını (2 sütun) kopyalayıp buraya yapıştır"></textarea>
+      </label>
+      <p class="hint">Açıklamalar bu yüklemedeki parçalara yazılır. Yeni parçalar açıklamayla açılır; mevcut parçalarda açıklama boşsa doldurulur, dolu olanlar değişmez. Yalnızca klasörde görseli olan parçalar işlenir.</p>
     </section>
 
     <section class="card" id="previewCard" hidden>
@@ -248,6 +254,18 @@
         : { partNumber: base.trim(), index: 0 };
     }
 
+    // "HCB31-1195<TAB>Açıklama" satırlarını parça no -> açıklama haritasına çevirir
+    function parseDescriptions(text) {
+      const map = new Map();
+      for (const line of text.split(/\r?\n/)) {
+        const [partRaw, ...rest] = line.split('\t');
+        const part = (partRaw || '').trim();
+        const desc = rest.join('\t').trim();
+        if (part && desc) map.set(keyOf(part), desc);
+      }
+      return map;
+    }
+
     function errorMessage(err) {
       if (err?.code === '23505') return 'Bu parça numarası zaten kayıtlı.';
       if (err?.code === '42501' || /row-level security/i.test(err?.message || '')) return 'Bu işlem için yetkiniz yok.';
@@ -289,6 +307,7 @@
       els.folderInput.disabled = busy;
       els.acSelect.disabled = busy;
       els.mtSelect.disabled = busy;
+      els.descInput.disabled = busy;
     }
 
     function fillSelectOptions(select, values) {
@@ -611,6 +630,7 @@
       renderFailures();
 
       const targets = [...result.targets.values()];
+      const descriptions = result.descriptions ?? new Map();
       const ids = new Map(); // anahtar -> parça id
       const badKeys = new Set();
       for (const t of targets) {
@@ -626,6 +646,7 @@
           part_number: t.partNumber,
           ac_type: result.acType,
           material_type: result.materialType,
+          material_desc: descriptions.get(t.key) ?? null,
         }));
         const { data, error } = await sb.from('parts').insert(rows).select('id, part_number');
         if (error) {
@@ -644,6 +665,16 @@
           badKeys.add(t.key);
           recordKeyFailure(result, t.key, 'Parça açılamadı.');
         }
+      }
+
+      // 1b) Mevcut parçalarda açıklama boşsa doldur (dolu olanlara dokunulmaz)
+      for (const t of targets.filter((t) => t.existingId && descriptions.has(t.key))) {
+        const { error } = await sb
+          .from('parts')
+          .update({ material_desc: descriptions.get(t.key) })
+          .eq('id', t.existingId)
+          .or('material_desc.is.null,material_desc.eq.');
+        if (error) recordKeyFailure(result, t.key, `Açıklama yazılamadı: ${errorMessage(error)}`);
       }
 
       // 2) Üzerine yazma: mevcut parçaların eski görsellerini temizle
@@ -721,6 +752,7 @@
       // Seçimler yükleme anında okunur
       plan.acType = els.acSelect.value || null;
       plan.materialType = els.mtSelect.value || null;
+      plan.descriptions = parseDescriptions(els.descInput.value);
 
       if (plan.overwrite) {
         const existingCount = [...plan.targets.values()].filter((t) => t.existingId).length;
