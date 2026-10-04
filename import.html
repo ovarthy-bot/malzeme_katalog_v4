@@ -1,0 +1,647 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Toplu Görsel Yükleme</title>
+  <style>
+    :root {
+      --primary: #4a6fb5;
+      --bg: #eef2f8;
+      --surface: #ffffff;
+      --text: #1d2433;
+      --muted: #7a8398;
+      --border: #dde3ee;
+      --ok: #2e9e5b;
+      --bad: #c0392b;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 20px;
+      background: var(--primary);
+      color: #fff;
+    }
+
+    header h1 { margin: 0; font-size: 18px; }
+    header a { color: #fff; font-size: 14px; }
+
+    main {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .card {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 18px;
+      border-radius: 14px;
+      background: var(--surface);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, .08);
+    }
+
+    .card h2 { margin: 0; font-size: 16px; }
+
+    .hint { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.5; }
+
+    .check { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+
+    .btn {
+      height: 44px;
+      padding: 0 18px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--surface);
+      color: var(--text);
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+      align-self: flex-start;
+    }
+
+    .btn.primary {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: #fff;
+    }
+
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+    dl.summary {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px 16px;
+      margin: 0;
+      font-size: 14px;
+    }
+
+    dl.summary dt { color: var(--muted); }
+    dl.summary dd { margin: 0; font-weight: 600; text-align: right; }
+
+    details { font-size: 14px; }
+
+    details summary {
+      cursor: pointer;
+      color: var(--primary);
+      padding: 4px 0;
+    }
+
+    details ul {
+      max-height: 220px;
+      overflow: auto;
+      margin: 6px 0 0;
+      padding-left: 18px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    progress { width: 100%; height: 16px; }
+
+    .warn { margin: 0; font-size: 13px; color: var(--bad); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Toplu Görsel Yükleme</h1>
+    <a href="index.html">Uygulamaya dön</a>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>1. Klasörü seç</h2>
+      <p class="hint">
+        Dosya adı parça numarası olmalı, örneğin <b>HCB31-1195.jpg</b>. Aynı parçanın ek görselleri
+        <b>HCB31-1195 (1).jpg</b> ve <b>HCB31-1195 (2).jpg</b> şeklinde adlandırılır. Alt klasörler dahil edilmez.
+      </p>
+      <input id="folderInput" type="file" webkitdirectory multiple>
+      <label class="check">
+        <input id="overwrite" type="checkbox">
+        Mevcut görselleri sil ve baştan yükle (üzerine yaz)
+      </label>
+    </section>
+
+    <section class="card" id="previewCard" hidden>
+      <h2>2. Ön izleme</h2>
+      <dl id="summary" class="summary"></dl>
+      <p id="overwriteWarn" class="warn" hidden></p>
+      <details>
+        <summary>Eşleşmeyen dosyalar</summary>
+        <ul id="unmatchedList"></ul>
+      </details>
+      <details>
+        <summary>Atlanan dosyalar (desteklenmeyen format)</summary>
+        <ul id="skippedList"></ul>
+      </details>
+      <details>
+        <summary>Zaten yüklü olanlar</summary>
+        <ul id="doneList"></ul>
+      </details>
+      <button id="startBtn" class="btn primary" type="button" disabled>Yüklemeyi başlat</button>
+    </section>
+
+    <section class="card" id="progressCard" hidden>
+      <h2>3. Yükleme</h2>
+      <progress id="progress" value="0" max="1"></progress>
+      <p id="progressText" class="hint"></p>
+      <details>
+        <summary>Hatalar</summary>
+        <ul id="failList"></ul>
+      </details>
+      <button id="csvBtn" class="btn" type="button" hidden>Hata listesini indir (CSV)</button>
+    </section>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>
+    /* ==========================================================
+       Yapılandırma (index.html ile aynı)
+       ========================================================== */
+
+    const SUPABASE_URL = 'https://rkjnyexhnkiigvwnqvtx.supabase.co';
+    const SUPABASE_KEY = 'sb_publishable_EmbtWNix9l-WR-kVoaWwDA_oBV2h29Z';
+    const BUCKET = 'part-images';
+    const SUPPORTED_RE = /\.(jpe?g|png|webp)$/i;
+    const CONCURRENCY = 3;
+
+    const IMAGE_MAX_SIDE = 1280;
+    const IMAGE_TARGET_BYTES = 400 * 1024;
+    const IMAGE_QUALITY_STEPS = [0.85, 0.75, 0.65, 0.55];
+    const IMAGE_SCALE_STEP = 0.75;
+    const IMAGE_MAX_PASSES = 4;
+
+    const els = Object.fromEntries([...document.querySelectorAll('[id]')].map((el) => [el.id, el]));
+
+    let sb = null;
+    let plan = null;
+    let failures = [];
+    let scanToken = 0;
+
+    /* ==========================================================
+       Yardımcılar
+       ========================================================== */
+
+    const keyOf = (partNumber) => partNumber.trim().toUpperCase();
+
+    const csvCell = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+
+    // "HCB31-1195 (2).jpg" -> { partNumber: "HCB31-1195", index: 2 }
+    function parseFileName(name) {
+      const base = name.replace(/\.[^.]+$/, '');
+      const match = base.match(/^(.*?)\s*\((\d+)\)\s*$/);
+      return match
+        ? { partNumber: match[1].trim(), index: Number(match[2]) }
+        : { partNumber: base.trim(), index: 0 };
+    }
+
+    function errorMessage(err) {
+      if (err?.code === '23505') return 'Bu parça numarası zaten kayıtlı.';
+      if (err?.code === '42501' || /row-level security/i.test(err?.message || '')) return 'Bu işlem için yetkiniz yok.';
+      if (/fetch|network/i.test(err?.message || '')) return 'Sunucuya bağlanılamadı.';
+      return err?.message || 'Bilinmeyen hata';
+    }
+
+    function addRow(label, value) {
+      const dt = document.createElement('dt');
+      dt.textContent = label;
+      const dd = document.createElement('dd');
+      dd.textContent = value;
+      return [dt, dd];
+    }
+
+    function fillList(list, names) {
+      list.replaceChildren(...(names.length
+        ? names.map((name) => {
+          const li = document.createElement('li');
+          li.textContent = name;
+          return li;
+        })
+        : [Object.assign(document.createElement('li'), { textContent: '—' })]));
+    }
+
+    function renderFailures() {
+      fillList(els.failList, failures.map((f) => `${f.file} (${f.partNumber || '-'}): ${f.error}`));
+      els.csvBtn.hidden = failures.length === 0;
+    }
+
+    function setProgress(done, total) {
+      els.progress.max = total || 1;
+      els.progress.value = done;
+      els.progressText.textContent = `${done} / ${total} dosya işlendi · ${failures.length} hata`;
+    }
+
+    function lockUI(busy) {
+      els.startBtn.disabled = busy;
+      els.overwrite.disabled = busy;
+      els.folderInput.disabled = busy;
+    }
+
+    /* ==========================================================
+       Veri erişimi
+       ========================================================== */
+
+    // PostgREST en fazla 1000 satır döndürür; tabloyu sayfalı okur
+    async function fetchAllRows(table, columns) {
+      const rows = [];
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await sb
+          .from(table)
+          .select(columns)
+          .order('id', { ascending: true })
+          .range(from, from + 999);
+        if (error) throw error;
+        rows.push(...data);
+        if (data.length < 1000) return rows;
+      }
+    }
+
+    function storagePath(url) {
+      if (!url) return null;
+      const marker = `/${BUCKET}/`;
+      const index = url.indexOf(marker);
+      if (index === -1) return null;
+      return decodeURIComponent(url.slice(index + marker.length).split('?')[0]);
+    }
+
+    async function removeStorageFiles(urls) {
+      const paths = [...new Set(urls.map(storagePath).filter(Boolean))];
+      if (!paths.length) return;
+      try {
+        const { error } = await sb.storage.from(BUCKET).remove(paths);
+        if (error) console.warn('Görseller silinemedi:', error.message);
+      } catch (err) {
+        console.warn('Görseller silinemedi:', err);
+      }
+    }
+
+    // Kapak görseli (parts.image_url) galerinin ilk görseline eşitlenir
+    async function syncPrimaryImage(partId) {
+      const { data, error } = await sb
+        .from('part_images')
+        .select('image_url')
+        .eq('part_id', partId)
+        .order('position', { ascending: true })
+        .order('id', { ascending: true })
+        .limit(1);
+      if (error) throw error;
+      const { error: updateError } = await sb
+        .from('parts')
+        .update({ image_url: data[0]?.image_url ?? null })
+        .eq('id', partId);
+      if (updateError) throw updateError;
+    }
+
+    // Üzerine yazma: parçanın tüm görsellerini (kayıt ve dosya) siler
+    async function clearPartImages(partId) {
+      const { data, error } = await sb.from('part_images').select('image_url').eq('part_id', partId);
+      if (error) throw error;
+      if (data.length) {
+        const { error: deleteError } = await sb.from('part_images').delete().eq('part_id', partId);
+        if (deleteError) throw deleteError;
+        await removeStorageFiles(data.map((row) => row.image_url));
+      }
+      const { error: updateError } = await sb.from('parts').update({ image_url: null }).eq('id', partId);
+      if (updateError) throw updateError;
+    }
+
+    /* ==========================================================
+       Görsel küçültme (index.html ile aynı mantık)
+       ========================================================== */
+
+    async function decodeImage(file) {
+      if (window.createImageBitmap) {
+        try {
+          const bitmap = await createImageBitmap(file);
+          return { source: bitmap, cleanup: () => bitmap.close() };
+        } catch {
+          // Tarayıcı bu biçimi doğrudan çözemezse <img> ile denenir
+        }
+      }
+      const url = URL.createObjectURL(file);
+      const img = await new Promise((resolve, reject) => {
+        const el = new Image();
+        el.onload = () => resolve(el);
+        el.onerror = () => reject(new Error('Görsel çözümlenemedi.'));
+        el.src = url;
+      }).catch((err) => {
+        URL.revokeObjectURL(url);
+        throw err;
+      });
+      return { source: img, cleanup: () => URL.revokeObjectURL(url) };
+    }
+
+    function canvasToBlob(canvas, quality) {
+      return new Promise((resolve, reject) => {
+        canvas.toBlob(
+          (blob) => (blob ? resolve(blob) : reject(new Error('Görsel sıkıştırılamadı.'))),
+          'image/jpeg',
+          quality
+        );
+      });
+    }
+
+    async function compressImage(file) {
+      const { source, cleanup } = await decodeImage(file);
+      try {
+        const srcW = source.naturalWidth || source.width;
+        const srcH = source.naturalHeight || source.height;
+        let scale = Math.min(1, IMAGE_MAX_SIDE / Math.max(srcW, srcH));
+        let blob = null;
+
+        for (let pass = 0; pass < IMAGE_MAX_PASSES; pass++) {
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, Math.round(srcW * scale));
+          canvas.height = Math.max(1, Math.round(srcH * scale));
+
+          const ctx = canvas.getContext('2d');
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.imageSmoothingQuality = 'high';
+          ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+
+          for (const quality of IMAGE_QUALITY_STEPS) {
+            blob = await canvasToBlob(canvas, quality);
+            if (blob.size <= IMAGE_TARGET_BYTES) return blob;
+          }
+          scale *= IMAGE_SCALE_STEP;
+        }
+        return blob;
+      } finally {
+        cleanup();
+      }
+    }
+
+    /* ==========================================================
+       Tarama ve ön izleme
+       ========================================================== */
+
+    // Dosyaları parça numarasıyla eşleştirir; yüklenecek, atlanacak ve eşleşmeyenleri ayırır
+    function buildPlan({ rootFiles, subCount, parts, images, overwrite }) {
+      const partByKey = new Map(parts.map((p) => [keyOf(p.part_number), p]));
+      const doneKeys = new Set(images.filter((i) => i.source_name).map((i) => `${i.part_id}|${i.source_name}`));
+      const maxPosition = new Map();
+      for (const img of images) {
+        maxPosition.set(img.part_id, Math.max(maxPosition.get(img.part_id) ?? -1, img.position));
+      }
+
+      const result = {
+        items: [],
+        skipped: [],
+        unmatched: [],
+        done: [],
+        affectedParts: new Map(),
+        rootCount: rootFiles.length,
+        subCount,
+        overwrite,
+      };
+
+      const candidates = [];
+      for (const file of rootFiles) {
+        if (!SUPPORTED_RE.test(file.name)) {
+          result.skipped.push(file.name);
+          continue;
+        }
+        const { partNumber, index } = parseFileName(file.name);
+        const part = partByKey.get(keyOf(partNumber));
+        if (!part) {
+          result.unmatched.push(file.name);
+          continue;
+        }
+        if (!overwrite && doneKeys.has(`${part.id}|${file.name}`)) {
+          result.done.push(file.name);
+          continue;
+        }
+        candidates.push({ file, part, partNumber, index });
+      }
+
+      candidates.sort((a, b) => a.part.id - b.part.id || a.index - b.index || a.file.name.localeCompare(b.file.name, 'tr'));
+
+      for (const candidate of candidates) {
+        const partId = candidate.part.id;
+        if (!result.affectedParts.has(partId)) {
+          // Üzerine yazılıyorsa sıra 0'dan başlar, aksi halde mevcut görsellerin arkasına eklenir
+          result.affectedParts.set(partId, {
+            part: candidate.part,
+            nextPosition: overwrite ? 0 : (maxPosition.get(partId) ?? -1) + 1,
+          });
+        }
+        const slot = result.affectedParts.get(partId);
+        result.items.push({ ...candidate, position: slot.nextPosition++ });
+      }
+
+      return result;
+    }
+
+    function renderSummary(result) {
+      const rows = [
+        ['Klasördeki dosya', result.rootCount],
+        ['Yüklenecek dosya', result.items.length],
+        ['Etkilenen parça', result.affectedParts.size],
+        ['Zaten yüklü (atlanacak)', result.done.length],
+        ['Eşleşmeyen dosya', result.unmatched.length],
+        ['Desteklenmeyen format', result.skipped.length],
+        ['Alt klasör dosyaları (dahil değil)', result.subCount],
+        ['Tahmini depolama (en fazla)', `${((result.items.length * IMAGE_TARGET_BYTES) / (1024 * 1024)).toFixed(1)} MB`],
+      ];
+      els.summary.replaceChildren(...rows.flatMap(([label, value]) => addRow(label, value)));
+
+      els.overwriteWarn.hidden = !result.overwrite;
+      els.overwriteWarn.textContent = result.overwrite
+        ? `${result.affectedParts.size} parçanın mevcut görselleri silinip yeniden yüklenecek.`
+        : '';
+
+      fillList(els.unmatchedList, result.unmatched);
+      fillList(els.skippedList, result.skipped);
+      fillList(els.doneList, result.done);
+      els.startBtn.disabled = result.items.length === 0;
+    }
+
+    async function scanFolder() {
+      const token = ++scanToken;
+      const files = [...els.folderInput.files];
+      plan = null;
+      els.startBtn.disabled = true;
+
+      if (!files.length) {
+        els.previewCard.hidden = true;
+        return;
+      }
+
+      // Yalnızca seçilen klasörün kökü: "Klasör/dosya.jpg" (iki parça)
+      const rootFiles = files.filter((f) => f.webkitRelativePath.split('/').length === 2);
+      const subCount = files.length - rootFiles.length;
+
+      els.previewCard.hidden = false;
+      els.summary.replaceChildren(...addRow('Durum', 'Taranıyor…'));
+
+      try {
+        const [parts, images] = await Promise.all([
+          fetchAllRows('parts', 'id, part_number'),
+          fetchAllRows('part_images', 'id, part_id, source_name, position'),
+        ]);
+        if (token !== scanToken) return; // Daha yeni bir tarama başladı
+        plan = buildPlan({ rootFiles, subCount, parts, images, overwrite: els.overwrite.checked });
+        renderSummary(plan);
+      } catch (err) {
+        if (token === scanToken) els.summary.replaceChildren(...addRow('Hata', errorMessage(err)));
+      }
+    }
+
+    /* ==========================================================
+       Yükleme
+       ========================================================== */
+
+    async function importItem({ file, part, position }) {
+      let blob;
+      try {
+        blob = await compressImage(file);
+      } catch {
+        throw new Error('Görsel okunamadı (tarayıcı bu dosyayı açamadı).');
+      }
+
+      const name = `${Date.now()}_${Math.random().toString(36).slice(2, 9)}.jpg`;
+      const { error: uploadError } = await sb.storage.from(BUCKET).upload(name, blob, { contentType: 'image/jpeg' });
+      if (uploadError) throw uploadError;
+      const url = sb.storage.from(BUCKET).getPublicUrl(name).data.publicUrl;
+
+      const { error } = await sb
+        .from('part_images')
+        .insert([{ part_id: part.id, image_url: url, source_name: file.name, position }]);
+      if (error) {
+        await removeStorageFiles([url]); // Kayıt yazılamadıysa yüklenen dosyayı geri al
+        throw error;
+      }
+    }
+
+    function recordFailure(file, partNumber, message) {
+      failures.push({ file, partNumber, error: message });
+    }
+
+    async function runImport(result) {
+      failures = [];
+      const total = result.items.length;
+      setProgress(0, total);
+      els.progressCard.hidden = false;
+      renderFailures();
+
+      // 1) Üzerine yazma: etkilenen parçaların eski görsellerini temizle
+      const badParts = new Set();
+      if (result.overwrite) {
+        for (const { part } of result.affectedParts.values()) {
+          try {
+            await clearPartImages(part.id);
+          } catch (err) {
+            badParts.add(part.id);
+            for (const item of result.items.filter((i) => i.part.id === part.id)) {
+              recordFailure(item.file.name, item.partNumber, `Eski görseller silinemedi: ${errorMessage(err)}`);
+            }
+          }
+        }
+      }
+
+      // 2) Yükleme: aynı anda birkaç dosya (CONCURRENCY)
+      const queue = result.items.filter((item) => !badParts.has(item.part.id));
+      let processed = total - queue.length;
+      let cursor = 0;
+
+      const worker = async () => {
+        while (cursor < queue.length) {
+          const item = queue[cursor++];
+          try {
+            await importItem(item);
+          } catch (err) {
+            recordFailure(item.file.name, item.partNumber, errorMessage(err));
+          }
+          processed++;
+          setProgress(processed, total);
+        }
+      };
+      await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+
+      // 3) Kapak görselleri
+      for (const { part } of result.affectedParts.values()) {
+        if (badParts.has(part.id)) continue;
+        try {
+          await syncPrimaryImage(part.id);
+        } catch (err) {
+          recordFailure('(kapak görseli)', part.part_number, errorMessage(err));
+        }
+      }
+
+      renderFailures();
+      els.progressText.textContent = `Tamamlandı: ${total - failures.length} başarılı, ${failures.length} hata.`;
+    }
+
+    function downloadFailures() {
+      const lines = [
+        ['dosya', 'parca_no', 'hata'].join(';'),
+        ...failures.map((f) => [f.file, f.partNumber, f.error].map(csvCell).join(';')),
+      ];
+      // BOM: Excel'in Türkçe karakterleri doğru göstermesi için
+      const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `yukleme-hatalari-${Date.now()}.csv`;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    /* ==========================================================
+       Olaylar ve başlangıç
+       ========================================================== */
+
+    els.folderInput.addEventListener('change', scanFolder);
+
+    els.overwrite.addEventListener('change', scanFolder);
+
+    els.startBtn.addEventListener('click', async () => {
+      if (!plan || !plan.items.length) return;
+
+      if (plan.overwrite) {
+        const ok = confirm(
+          `${plan.affectedParts.size} parçanın mevcut görselleri silinecek ve yeniden yüklenecek. Devam edilsin mi?`
+        );
+        if (!ok) return;
+      }
+
+      lockUI(true);
+      try {
+        await runImport(plan);
+      } finally {
+        lockUI(false);
+      }
+
+      // Üzerine yazma tek seferlik olsun; yeniden taramada yanlışlıkla tekrar silinmesin
+      els.overwrite.checked = false;
+      els.csvBtn.hidden = failures.length === 0;
+      await scanFolder();
+    });
+
+    els.csvBtn.addEventListener('click', downloadFailures);
+
+    if (!window.supabase) {
+      els.previewCard.hidden = false;
+      els.summary.replaceChildren(...addRow('Hata', 'Supabase kütüphanesi yüklenemedi. İnternet bağlantınızı kontrol edin.'));
+    } else {
+      sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    }
+  </script>
+</body>
+</html>
