@@ -545,7 +545,7 @@
     // Veritabanı ve depolama kullanımı; yüklemeden sonra kalan alanı tahmin eder
     function capacityRows(usage, uploadBytes) {
       const rows = [
-        usageRow('Veritabanı diski', usage.db, DB_LIMIT_BYTES),
+        usageRow('Veritabanı boyutu', usage.db, DB_LIMIT_BYTES),
         usageRow('Görsel depolama', usage.storage, STORAGE_LIMIT_BYTES),
       ];
       if (usage.storage != null) {
