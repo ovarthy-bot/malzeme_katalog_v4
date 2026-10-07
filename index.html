@@ -321,22 +321,10 @@
 
     .contents { display: contents; }
 
-    .folder-card .thumb {
-      display: grid;
-      place-items: center;
-      background: var(--chip);
-    }
-
-    .folder-card .thumb svg {
-      width: 44px;
-      height: 44px;
-      color: var(--primary);
-    }
-
+    .folder-edit,
     .folder-delete {
       position: absolute;
       top: 6px;
-      right: 6px;
       width: 24px;
       height: 24px;
       display: grid;
@@ -350,6 +338,10 @@
       z-index: 1;
     }
 
+    .folder-edit { left: 6px; }
+    .folder-delete { right: 6px; }
+
+    .folder-edit svg,
     .folder-delete svg { width: 12px; height: 12px; }
 
     .thumb img {
@@ -1177,6 +1169,7 @@
       chevron: '<polyline points="9 6 15 12 9 18"/>',
       folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>',
       folderPlus: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><line x1="12" y1="11" x2="12" y2="16"/><line x1="9.5" y1="13.5" x2="14.5" y2="13.5"/>',
+      pencil: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
     };
 
     const PLACEHOLDER_SRC = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
@@ -1186,6 +1179,17 @@
       '<rect x="50" y="50" width="100" height="78" rx="8"/><circle cx="82" cy="81" r="10"/><path d="M60 119l30-24 22 17 14-11 14 18"/>' +
       '</g>' +
       '<text x="100" y="160" text-anchor="middle" font-family="Arial, sans-serif" font-size="15" font-weight="bold" fill="#5b6785">Görsel yüklenmemiş</text>' +
+      '</svg>'
+    );
+
+    // Kapak görseli yüklenmemiş klasörler için varsayılan "duvar kağıdı"
+    const FOLDER_PLACEHOLDER_SRC = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">' +
+      '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">' +
+      '<stop offset="0" stop-color="#8aa3d6"/><stop offset="1" stop-color="#3f5f9e"/>' +
+      '</linearGradient></defs>' +
+      '<rect width="200" height="200" fill="url(#g)"/>' +
+      '<path d="M46 76a10 10 0 0 1 10-10h28l14 14h56a10 10 0 0 1 10 10v48a10 10 0 0 1-10 10H56a10 10 0 0 1-10-10z" fill="none" stroke="#ffffff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" opacity="0.92"/>' +
       '</svg>'
     );
 
@@ -1254,7 +1258,10 @@
       folderSearch: '',
       foldersCache: new Map(),
       foldersInView: [],
-      folderImageBlob: null,
+      editingFolder: null,       // Düzenlenen klasör (yeni klasör için null)
+      folderImageBlob: null,     // Henüz kaydedilmemiş yeni kapak görseli
+      folderImagePreviewUrl: null,
+      folderImageRemoved: false, // Düzenlemede mevcut görsel kaldırıldı mı
     };
     if (!GRID_MODES[state.gridMode]) state.gridMode = '2x3';
     if (!['light', 'dark'].includes(state.theme)) state.theme = 'light';
@@ -1296,12 +1303,12 @@
         : `${Math.round(bytes / 1024)} KB`;
     }
 
-    function setImage(img, src) {
+    function setImage(img, src, placeholder = PLACEHOLDER_SRC) {
       img.onerror = () => {
         img.onerror = null;
-        img.src = PLACEHOLDER_SRC;
+        img.src = placeholder;
       };
-      img.src = src || PLACEHOLDER_SRC;
+      img.src = src || placeholder;
     }
 
     let toastTimer = null;
@@ -1452,8 +1459,9 @@
       return data;
     }
 
-    // Klasör ağacını üst klasör seçimleri için girintili düz listeye çevirir
-    function buildFolderOptions(folders) {
+    // Klasör ağacını üst klasör seçimleri için girintili düz listeye çevirir.
+    // excludeId verilirse o klasör ve tüm alt ağacı listeden çıkarılır (döngü oluşmasın diye, düzenlemede kullanılır).
+    function buildFolderOptions(folders, excludeId) {
       const byParent = new Map();
       folders.forEach((f) => {
         const key = f.parent_id || 'root';
@@ -1465,6 +1473,7 @@
       function walk(parentKey, depth) {
         const list = (byParent.get(parentKey) || []).slice().sort((a, b) => trSort(a.name, b.name));
         for (const f of list) {
+          if (f.id === excludeId) continue; // alt ağacına da hiç inilmez
           options.push({ id: f.id, label: '　'.repeat(depth) + f.name });
           walk(f.id, depth + 1);
         }
@@ -1473,11 +1482,11 @@
       return options;
     }
 
-    async function fillFolderSelect(select, selectedId) {
+    async function fillFolderSelect(select, selectedId, excludeId) {
       select.replaceChildren(new Option('Kök dizin', ''));
       try {
         const folders = await fetchAllFolders();
-        select.append(...buildFolderOptions(folders).map((o) => new Option(o.label, o.id)));
+        select.append(...buildFolderOptions(folders, excludeId).map((o) => new Option(o.label, o.id)));
       } catch (err) {
         toast(errorMessage(err));
       }
@@ -1492,18 +1501,23 @@
       card.tabIndex = 0;
 
       const thumb = h('div', 'thumb');
-      if (folder.bg_image_url) {
-        const img = h('img');
-        img.loading = 'lazy';
-        img.alt = folder.name;
-        setImage(img, folder.bg_image_url);
-        thumb.append(img);
-      } else {
-        thumb.innerHTML = svg(ICONS.folder);
-      }
+      const img = h('img');
+      img.loading = 'lazy';
+      img.alt = folder.name;
+      setImage(img, folder.bg_image_url, FOLDER_PLACEHOLDER_SRC);
+      thumb.append(img);
 
       const meta = h('div', 'meta');
       meta.append(h('span', 'title', folder.name));
+
+      const edit = h('button', 'folder-edit');
+      edit.type = 'button';
+      edit.setAttribute('aria-label', 'Klasörü düzenle');
+      setIcon(edit, 'pencil');
+      edit.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openFolderForm(folder);
+      });
 
       const del = h('button', 'folder-delete');
       del.type = 'button';
@@ -1514,7 +1528,7 @@
         deleteFolder(folder);
       });
 
-      card.append(thumb, meta, del);
+      card.append(thumb, meta, edit, del);
       card.addEventListener('click', () => enterFolder(folder));
       card.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') enterFolder(folder);
@@ -1589,17 +1603,49 @@
       catalogPager.reset();
     }
 
-    async function openFolderForm() {
-      els.folderForm.reset();
+    function clearFolderImageBlob() {
+      if (state.folderImagePreviewUrl) URL.revokeObjectURL(state.folderImagePreviewUrl);
       state.folderImageBlob = null;
+      state.folderImagePreviewUrl = null;
+    }
+
+    // Önizlemede sırasıyla: yeni seçilen görsel > düzenlenen klasörün mevcut görseli (kaldırılmadıysa) > boş
+    function renderFolderImagePreview() {
+      if (state.folderImageBlob) {
+        els.folderImagePreview.replaceChildren(formTile(state.folderImagePreviewUrl, () => {
+          clearFolderImageBlob();
+          renderFolderImagePreview();
+        }));
+        return;
+      }
+      if (state.editingFolder?.bg_image_url && !state.folderImageRemoved) {
+        els.folderImagePreview.replaceChildren(formTile(state.editingFolder.bg_image_url, () => {
+          state.folderImageRemoved = true;
+          renderFolderImagePreview();
+        }));
+        return;
+      }
       els.folderImagePreview.replaceChildren();
-      await fillFolderSelect(els.ff_parent, state.currentFolderId);
+    }
+
+    // folder verilirse düzenleme modunda açılır, verilmezse yeni klasör oluşturma modunda
+    async function openFolderForm(folder = null) {
+      state.editingFolder = folder;
+      clearFolderImageBlob();
+      state.folderImageRemoved = false;
+      els.folderForm.reset();
+      els.folderFormTitle.textContent = folder ? 'Klasörü Düzenle' : 'Yeni Klasör';
+      if (folder) els.ff_name.value = folder.name;
+      renderFolderImagePreview();
+      setFolderSaving(false);
+      await fillFolderSelect(els.ff_parent, folder ? folder.parent_id : state.currentFolderId, folder?.id);
       els.folderFormSheet.showModal();
     }
 
     function setFolderSaving(saving) {
       els.folderSaveBtn.disabled = saving;
-      els.folderSaveBtn.textContent = saving ? 'Oluşturuluyor…' : 'Oluştur';
+      if (saving) els.folderSaveBtn.textContent = 'Kaydediliyor…';
+      else els.folderSaveBtn.textContent = state.editingFolder ? 'Kaydet' : 'Oluştur';
     }
 
     async function onFolderImageChange(event) {
@@ -1608,13 +1654,11 @@
       if (!file) return;
       try {
         const blob = await compressImage(file);
+        clearFolderImageBlob();
         state.folderImageBlob = blob;
-        const url = URL.createObjectURL(blob);
-        els.folderImagePreview.replaceChildren(formTile(url, () => {
-          state.folderImageBlob = null;
-          URL.revokeObjectURL(url);
-          els.folderImagePreview.replaceChildren();
-        }));
+        state.folderImagePreviewUrl = URL.createObjectURL(blob);
+        state.folderImageRemoved = false;
+        renderFolderImagePreview();
       } catch {
         toast('Görsel okunamadı.');
       }
@@ -1628,15 +1672,29 @@
         return;
       }
       const parentId = els.ff_parent.value || null;
+      const editing = state.editingFolder;
+      const oldUrl = editing?.bg_image_url || null;
 
       setFolderSaving(true);
       try {
-        let bgUrl = null;
+        let bgUrl = oldUrl;
         if (state.folderImageBlob) bgUrl = await uploadImage(state.folderImageBlob, 'folders/');
-        const { error } = await sb.from('folders').insert([{ name, parent_id: parentId, bg_image_url: bgUrl }]);
-        if (error) throw error;
+        else if (editing && state.folderImageRemoved) bgUrl = null;
+
+        if (editing) {
+          const { error } = await sb.from('folders')
+            .update({ name, parent_id: parentId, bg_image_url: bgUrl })
+            .eq('id', editing.id);
+          if (error) throw error;
+        } else {
+          const { error } = await sb.from('folders').insert([{ name, parent_id: parentId, bg_image_url: bgUrl }]);
+          if (error) throw error;
+        }
+
+        if (oldUrl && oldUrl !== bgUrl) await removeStorageFiles([oldUrl]);
+
         els.folderFormSheet.close();
-        toast('Klasör oluşturuldu.');
+        toast(editing ? 'Klasör güncellendi.' : 'Klasör oluşturuldu.');
         resetCatalog();
       } catch (err) {
         toast(errorMessage(err));
@@ -2505,7 +2563,7 @@
       });
 
       els.folderBackBtn.addEventListener('click', goUpFolder);
-      els.newFolderBtn.addEventListener('click', openFolderForm);
+      els.newFolderBtn.addEventListener('click', () => openFolderForm());
       els.folderForm.addEventListener('submit', saveFolderForm);
       els.ff_image.addEventListener('change', onFolderImageChange);
 
