@@ -166,6 +166,20 @@
 
     .view.active { display: flex; }
 
+    /* Klasör içindeyken ekranın sol kenarına dokunarak da üst klasöre dönülebilir (görünmez dokunma alanı) */
+    .folder-back-zone {
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 28px;
+      border: 0;
+      padding: 0;
+      background: transparent;
+      cursor: pointer;
+      z-index: 5;
+    }
+
+    .folder-back-zone[hidden] { display: none; }
+
     .scroll {
       flex: 1;
       min-height: 0;
@@ -886,6 +900,7 @@
       <main class="views">
         <!-- Katalog -->
         <section class="view active" data-view="catalog">
+          <button id="folderBackZone" class="folder-back-zone" type="button" aria-label="Üst klasör" hidden></button>
           <div class="toolbar">
             <button id="folderBackBtn" class="icon-btn" type="button" aria-label="Üst klasör" title="Üst klasör" data-icon="back" hidden></button>
             <input id="folderSearch" class="search" type="search" placeholder="Klasör ara…" autocomplete="off" aria-label="Klasör ara">
@@ -984,6 +999,7 @@
 
         <!-- Ayarlar -->
         <section class="view" data-view="settings">
+          <span class="settings-credit">Katkılarından dolayı İlhan Bey'e teşekkürler.</span>
           <div class="scroll settings">
             <h3 class="section-title">Görünüm</h3>
 
@@ -1602,17 +1618,29 @@
       state.currentFolderId = folder.id;
       state.folderSearch = '';
       els.folderSearch.value = '';
+      // Cihazın/tarayıcının geri tuşu bu klasörden bir üst klasöre dönebilsin diye geçmişe eklenir
+      try { history.pushState({ folderNav: true }, ''); } catch { /* yoksay */ }
       resetCatalog();
     }
 
-    function goUpFolder() {
+    // Asıl durum güncellemesi: bir üst klasöre geçer, tarayıcı geçmişine dokunmaz
+    // (popstate olayı tarafından çağrılır; geçmiş zaten o olayla bir adım geri gitmiştir)
+    function applyGoUpFolder() {
       state.folderStack.pop();
       state.currentFolderId = state.folderStack[state.folderStack.length - 1] ?? null;
       resetCatalog();
     }
 
+    // Kullanıcı tetikleyicileri (üst klasör butonu / ekranın sol kenarı): tarayıcı geçmişinde
+    // bir adım geri gider; bu da popstate'i tetikleyip applyGoUpFolder()'ı çalıştırır
+    function goUpFolder() {
+      if (!state.currentFolderId) return;
+      history.back();
+    }
+
     function syncFolderUI() {
       els.folderBackBtn.hidden = !state.currentFolderId;
+      els.folderBackZone.hidden = !state.currentFolderId;
       if (state.view === 'catalog') {
         const folder = state.currentFolderId ? state.foldersCache.get(state.currentFolderId) : null;
         els.pageTitle.textContent = folder ? folder.name : TITLES.catalog;
@@ -2624,6 +2652,11 @@
       });
 
       els.folderBackBtn.addEventListener('click', goUpFolder);
+      els.folderBackZone.addEventListener('click', goUpFolder);
+      // Cihazın/tarayıcının geri tuşu: klasör içindeyken bir üst klasöre döner
+      window.addEventListener('popstate', () => {
+        if (state.currentFolderId) applyGoUpFolder();
+      });
       els.newFolderBtn.addEventListener('click', () => openFolderForm());
       els.folderForm.addEventListener('submit', saveFolderForm);
       els.ff_image.addEventListener('change', onFolderImageChange);
