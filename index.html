@@ -215,6 +215,8 @@
       cursor: pointer;
     }
 
+    .icon-btn[hidden] { display: none; }
+
     /* Filtre uygulanmışsa filtre butonu dolu renkle görünür */
     .icon-btn[aria-pressed="true"] {
       background: var(--primary);
@@ -299,6 +301,7 @@
     }
 
     .card {
+      position: relative;
       display: flex;
       flex-direction: column;
       min-width: 0;
@@ -315,6 +318,39 @@
       min-height: 0;
       background: var(--surface-2);
     }
+
+    .contents { display: contents; }
+
+    .folder-card .thumb {
+      display: grid;
+      place-items: center;
+      background: var(--chip);
+    }
+
+    .folder-card .thumb svg {
+      width: 44px;
+      height: 44px;
+      color: var(--primary);
+    }
+
+    .folder-delete {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      width: 24px;
+      height: 24px;
+      display: grid;
+      place-items: center;
+      padding: 0;
+      border: 0;
+      border-radius: 50%;
+      background: rgba(0, 0, 0, .55);
+      color: #fff;
+      cursor: pointer;
+      z-index: 1;
+    }
+
+    .folder-delete svg { width: 12px; height: 12px; }
 
     .thumb img {
       position: absolute;
@@ -824,6 +860,12 @@
         <!-- Katalog -->
         <section class="view active" data-view="catalog">
           <div class="toolbar">
+            <button id="folderBackBtn" class="icon-btn" type="button" aria-label="Üst klasör" title="Üst klasör" data-icon="back" hidden></button>
+            <input id="folderSearch" class="search" type="search" placeholder="Klasör ara…" autocomplete="off" aria-label="Klasör ara">
+            <button id="newFolderBtn" class="icon-btn" type="button" aria-label="Yeni klasör" title="Yeni klasör" data-icon="folderPlus"></button>
+          </div>
+
+          <div class="toolbar">
             <input id="search" class="search" type="search" placeholder="Parça no, ad veya not ara…" autocomplete="off" aria-label="Parça ara">
 
             <button id="filterBtn" class="icon-btn" type="button" aria-label="Filtrele" title="Filtrele" data-icon="funnel"></button>
@@ -839,7 +881,10 @@
           </div>
 
           <div id="gridWrap" class="scroll grid-wrap">
-            <div id="grid" class="grid"></div>
+            <div id="grid" class="grid">
+              <div id="folderCards" class="contents"></div>
+              <div id="partCards" class="contents"></div>
+            </div>
             <div id="gridSentinel" class="sentinel"></div>
           </div>
         </section>
@@ -866,6 +911,11 @@
               <div class="field">
                 <label for="f_part_number">Parça numarası *</label>
                 <input id="f_part_number" name="part_number" maxlength="80" autocomplete="off" required>
+              </div>
+
+              <div class="field">
+                <label for="f_folder">Klasör</label>
+                <select id="f_folder" name="folder_id"></select>
               </div>
 
               <div class="field">
@@ -1013,6 +1063,33 @@
     </div>
   </dialog>
 
+  <!-- Yeni klasör -->
+  <dialog id="folderFormSheet" class="sheet" aria-labelledby="folderFormTitle">
+    <div class="sheet-head">
+      <h2 id="folderFormTitle">Yeni Klasör</h2>
+      <button class="icon-btn" type="button" data-close aria-label="Kapat" data-icon="close"></button>
+    </div>
+    <div class="sheet-body">
+      <form id="folderForm" class="part-form" novalidate>
+        <div class="field">
+          <label for="ff_name">Klasör adı *</label>
+          <input id="ff_name" name="name" maxlength="80" autocomplete="off" required>
+        </div>
+        <div class="field">
+          <label for="ff_parent">Üst klasör</label>
+          <select id="ff_parent" name="parent_id"></select>
+        </div>
+        <div class="field">
+          <label for="ff_image">Kapak görseli</label>
+          <div id="folderImagePreview" class="image-grid"></div>
+          <input id="ff_image" name="image" type="file" accept="image/*">
+          <p class="hint">İsteğe bağlı. Seçilmezse klasör simgesi gösterilir.</p>
+        </div>
+        <button id="folderSaveBtn" class="btn primary" type="submit">Oluştur</button>
+      </form>
+    </div>
+  </dialog>
+
   <!-- Menü -->
   <dialog id="menuSheet" class="sheet" aria-labelledby="menuTitle">
     <div class="sheet-head">
@@ -1098,6 +1175,8 @@
       notes: '<rect x="5" y="3" width="14" height="18" rx="2"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="13" y2="16"/>',
       gear: '<circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="8" stroke-dasharray="3 2.6"/>',
       chevron: '<polyline points="9 6 15 12 9 18"/>',
+      folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>',
+      folderPlus: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><line x1="12" y1="11" x2="12" y2="16"/><line x1="9.5" y1="13.5" x2="14.5" y2="13.5"/>',
     };
 
     const PLACEHOLDER_SRC = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
@@ -1170,6 +1249,12 @@
       pendingImages: [],     // Henüz kaydedilmemiş yeni görseller: { blob, url }
       detailId: null,
       partsById: new Map(),
+      currentFolderId: null,  // null: kök dizin
+      folderStack: [],        // Kökten şu anki klasöre kadar olan id zinciri
+      folderSearch: '',
+      foldersCache: new Map(),
+      foldersInView: [],
+      folderImageBlob: null,
     };
     if (!GRID_MODES[state.gridMode]) state.gridMode = '2x3';
     if (!['light', 'dark'].includes(state.theme)) state.theme = 'light';
@@ -1323,14 +1408,257 @@
 
       const term = searchTerm();
       if (term) {
+        // Arama metni varken sonuçlar tüm klasörlerde (küresel) aranır
         q = q.or(['part_number', 'material_desc', 'notes', 'teknisyen_agzi']
           .map((col) => `${col}.ilike.*${term}*`)
           .join(','));
+      } else {
+        q = state.currentFolderId ? q.eq('folder_id', state.currentFolderId) : q.is('folder_id', null);
       }
 
       return q
         .order(state.sortField, { ascending: state.sortAsc })
         .order('id', { ascending: state.sortAsc });
+    }
+
+    /* ==========================================================
+       Klasörler
+       ========================================================== */
+
+    async function fetchFolder(id) {
+      const { data, error } = await sb.from('folders').select('*').eq('id', id).single();
+      if (error) throw error;
+      state.foldersCache.set(id, data);
+      return data;
+    }
+
+    async function fetchChildFolders(parentId) {
+      let q = sb.from('folders').select('*');
+      q = parentId ? q.eq('parent_id', parentId) : q.is('parent_id', null);
+      const { data, error } = await q;
+      if (error) throw error;
+      return data.sort((a, b) => trSort(a.name, b.name));
+    }
+
+    async function searchFolderNames(term) {
+      const { data, error } = await sb.from('folders').select('*').ilike('name', `%${term}%`);
+      if (error) throw error;
+      return data.sort((a, b) => trSort(a.name, b.name));
+    }
+
+    async function fetchAllFolders() {
+      const { data, error } = await sb.from('folders').select('*');
+      if (error) throw error;
+      return data;
+    }
+
+    // Klasör ağacını üst klasör seçimleri için girintili düz listeye çevirir
+    function buildFolderOptions(folders) {
+      const byParent = new Map();
+      folders.forEach((f) => {
+        const key = f.parent_id || 'root';
+        if (!byParent.has(key)) byParent.set(key, []);
+        byParent.get(key).push(f);
+      });
+
+      const options = [];
+      function walk(parentKey, depth) {
+        const list = (byParent.get(parentKey) || []).slice().sort((a, b) => trSort(a.name, b.name));
+        for (const f of list) {
+          options.push({ id: f.id, label: '　'.repeat(depth) + f.name });
+          walk(f.id, depth + 1);
+        }
+      }
+      walk('root', 0);
+      return options;
+    }
+
+    async function fillFolderSelect(select, selectedId) {
+      select.replaceChildren(new Option('Kök dizin', ''));
+      try {
+        const folders = await fetchAllFolders();
+        select.append(...buildFolderOptions(folders).map((o) => new Option(o.label, o.id)));
+      } catch (err) {
+        toast(errorMessage(err));
+      }
+      select.value = selectedId || '';
+    }
+
+    function createFolderCard(folder) {
+      state.foldersCache.set(folder.id, folder);
+
+      const card = h('div', 'card folder-card');
+      card.setAttribute('role', 'button');
+      card.tabIndex = 0;
+
+      const thumb = h('div', 'thumb');
+      if (folder.bg_image_url) {
+        const img = h('img');
+        img.loading = 'lazy';
+        img.alt = folder.name;
+        setImage(img, folder.bg_image_url);
+        thumb.append(img);
+      } else {
+        thumb.innerHTML = svg(ICONS.folder);
+      }
+
+      const meta = h('div', 'meta');
+      meta.append(h('span', 'title', folder.name));
+
+      const del = h('button', 'folder-delete');
+      del.type = 'button';
+      del.setAttribute('aria-label', 'Klasörü sil');
+      setIcon(del, 'close');
+      del.addEventListener('click', (e) => {
+        e.stopPropagation();
+        deleteFolder(folder);
+      });
+
+      card.append(thumb, meta, del);
+      card.addEventListener('click', () => enterFolder(folder));
+      card.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') enterFolder(folder);
+      });
+      return card;
+    }
+
+    // Üst klasör zincirini (kökten itibaren) önbellekten veya sunucudan kurup o klasöre girer
+    async function enterFolder(folder) {
+      state.foldersCache.set(folder.id, folder);
+      const chain = [folder.id];
+      let parentId = folder.parent_id;
+      while (parentId) {
+        const parent = state.foldersCache.get(parentId) || (await fetchFolder(parentId));
+        chain.unshift(parent.id);
+        parentId = parent.parent_id;
+      }
+      state.folderStack = chain;
+      state.currentFolderId = folder.id;
+      state.folderSearch = '';
+      els.folderSearch.value = '';
+      resetCatalog();
+    }
+
+    function goUpFolder() {
+      state.folderStack.pop();
+      state.currentFolderId = state.folderStack[state.folderStack.length - 1] ?? null;
+      resetCatalog();
+    }
+
+    function syncFolderUI() {
+      els.folderBackBtn.hidden = !state.currentFolderId;
+      if (state.view === 'catalog') {
+        const folder = state.currentFolderId ? state.foldersCache.get(state.currentFolderId) : null;
+        els.pageTitle.textContent = folder ? folder.name : TITLES.catalog;
+      }
+    }
+
+    // Klasör ve parça gridini şu anki klasöre (veya klasör/parça aramasına) göre yeniden çizer
+    async function resetCatalog() {
+      syncFolderUI();
+      els.folderCards.replaceChildren();
+      state.foldersInView = [];
+
+      const folderTerm = state.folderSearch.trim();
+      if (folderTerm) {
+        try {
+          const folders = await searchFolderNames(folderTerm);
+          state.foldersInView = folders;
+          els.folderCards.append(...folders.map(createFolderCard));
+        } catch (err) {
+          toast(errorMessage(err));
+        }
+        els.partCards.replaceChildren();
+        els.resultCount.textContent = state.foldersInView.length
+          ? `${state.foldersInView.length} klasör bulundu`
+          : 'Eşleşen klasör bulunamadı';
+        els.sortInfo.textContent = '';
+        return;
+      }
+
+      updateSortUI(); // Klasör aramasından çıkınca sıralama bilgisi geri gelsin
+      if (!searchTerm()) {
+        try {
+          const folders = await fetchChildFolders(state.currentFolderId);
+          state.foldersInView = folders;
+          els.folderCards.append(...folders.map(createFolderCard));
+        } catch (err) {
+          toast(errorMessage(err));
+        }
+      }
+      catalogPager.reset();
+    }
+
+    async function openFolderForm() {
+      els.folderForm.reset();
+      state.folderImageBlob = null;
+      els.folderImagePreview.replaceChildren();
+      await fillFolderSelect(els.ff_parent, state.currentFolderId);
+      els.folderFormSheet.showModal();
+    }
+
+    function setFolderSaving(saving) {
+      els.folderSaveBtn.disabled = saving;
+      els.folderSaveBtn.textContent = saving ? 'Oluşturuluyor…' : 'Oluştur';
+    }
+
+    async function onFolderImageChange(event) {
+      const file = event.target.files[0];
+      event.target.value = '';
+      if (!file) return;
+      try {
+        const blob = await compressImage(file);
+        state.folderImageBlob = blob;
+        const url = URL.createObjectURL(blob);
+        els.folderImagePreview.replaceChildren(formTile(url, () => {
+          state.folderImageBlob = null;
+          URL.revokeObjectURL(url);
+          els.folderImagePreview.replaceChildren();
+        }));
+      } catch {
+        toast('Görsel okunamadı.');
+      }
+    }
+
+    async function saveFolderForm(event) {
+      event.preventDefault();
+      const name = els.ff_name.value.trim();
+      if (!name) {
+        toast('Klasör adı zorunludur.');
+        return;
+      }
+      const parentId = els.ff_parent.value || null;
+
+      setFolderSaving(true);
+      try {
+        let bgUrl = null;
+        if (state.folderImageBlob) bgUrl = await uploadImage(state.folderImageBlob, 'folders/');
+        const { error } = await sb.from('folders').insert([{ name, parent_id: parentId, bg_image_url: bgUrl }]);
+        if (error) throw error;
+        els.folderFormSheet.close();
+        toast('Klasör oluşturuldu.');
+        resetCatalog();
+      } catch (err) {
+        toast(errorMessage(err));
+      } finally {
+        setFolderSaving(false);
+      }
+    }
+
+    async function deleteFolder(folder) {
+      const ok = await askConfirm(`"${folder.name}" klasörü silinecek. İçindeki alt klasörler ve parçalar üst klasöre taşınacak, silinmeyecek.`);
+      if (!ok) return;
+
+      try {
+        const { data, error } = await sb.from('folders').delete().eq('id', folder.id).select('id');
+        if (error) throw error;
+        if (!data.length) throw new Error('Klasör silinemedi.');
+        if (folder.bg_image_url) await removeStorageFiles([folder.bg_image_url]);
+        toast('Klasör silindi.');
+        resetCatalog();
+      } catch (err) {
+        toast(errorMessage(err));
+      }
     }
 
     /* ==========================================================
@@ -1534,7 +1862,7 @@
       state.acFilter = new Set();
       state.mtFilter = new Set();
       updateFilterChip();
-      catalogPager.reset();
+      resetCatalog();
     }
 
     function openFilterSheet() {
@@ -1567,7 +1895,7 @@
       state.mtFilter = checkedValues(els.mtOptions);
       els.filterSheet.close();
       updateFilterChip();
-      catalogPager.reset();
+      resetCatalog();
     }
 
     /* ==========================================================
@@ -1594,9 +1922,11 @@
         row.addEventListener('click', () => {
           state.acFilter = new Set([name]);
           state.mtFilter = new Set();
+          state.currentFolderId = null;
+          state.folderStack = [];
           updateFilterChip();
           navigate('catalog');
-          catalogPager.reset();
+          resetCatalog();
         });
         return row;
       }));
@@ -1733,7 +2063,7 @@
 
         const before = state.partsById.get(partId)?.image_url ?? null;
         const after = await syncPrimaryImage(partId);
-        if (before !== after) catalogPager.reset(); // Kart görseli değiştiyse katalogu yenile
+        if (before !== after) resetCatalog(); // Kart görseli değiştiyse katalogu yenile
 
         toast('Görsel silindi.');
         renderDetailGallery(partId);
@@ -1805,10 +2135,13 @@
         });
         setSelectValue(form.elements.ac_type, part.ac_type);
         setSelectValue(form.elements.material_type, part.material_type);
+        await fillFolderSelect(els.f_folder, part.folder_id);
       } else {
         // Yeni parçada son seçilen değerler otomatik gelir
         form.elements.ac_type.value = lastChoice('ac_type');
         form.elements.material_type.value = lastChoice('material_type');
+        // Hangi klasör içinde geziniliyorsa yeni parça oraya eklenir
+        await fillFolderSelect(els.f_folder, state.currentFolderId);
       }
 
       els.formHint.textContent = part
@@ -1937,8 +2270,8 @@
       setSaveButton(saving, saving ? 'Kaydediliyor…' : 'Kaydet');
     }
 
-    async function uploadImage(blob) {
-      const name = `${Date.now()}_${Math.random().toString(36).slice(2, 9)}.jpg`;
+    async function uploadImage(blob, prefix = '') {
+      const name = `${prefix}${Date.now()}_${Math.random().toString(36).slice(2, 9)}.jpg`;
       const { error } = await sb.storage.from(BUCKET).upload(name, blob, { contentType: 'image/jpeg' });
       if (error) throw error;
       return sb.storage.from(BUCKET).getPublicUrl(name).data.publicUrl;
@@ -1981,6 +2314,7 @@
 
       const payload = {
         part_number: read('part_number'),
+        folder_id: form.elements.folder_id.value || null,
         ac_type: read('ac_type'),
         material_type: read('material_type'),
         material_desc: read('material_desc'),
@@ -2018,7 +2352,7 @@
         state.formRemoved = new Set();
         clearPendingImages();
         await loadMeta();
-        catalogPager.reset();
+        resetCatalog();
         navigate(state.prevView || 'catalog');
       } catch (err) {
         toast(errorMessage(err));
@@ -2048,6 +2382,7 @@
         b.classList.toggle('active', b.dataset.nav === activeNav);
       });
 
+      if (name === 'catalog') syncFolderUI();
       if (name === 'types') renderTypes();
       if (name === 'notes') notesPager.reset();
       if (name === 'settings') checkConnection();
@@ -2095,7 +2430,7 @@
         toast('Parça silindi.');
 
         await loadMeta();
-        catalogPager.reset();
+        resetCatalog();
         if (state.view === 'notes') notesPager.reset();
       } catch (err) {
         toast(errorMessage(err));
@@ -2155,9 +2490,24 @@
         clearTimeout(searchTimer);
         searchTimer = setTimeout(() => {
           state.search = els.search.value.trim();
-          catalogPager.reset();
+          resetCatalog();
         }, 200);
       });
+
+      // Klasör arama: yazarken anında (200 ms gecikmeyle) sorgu çalışır
+      let folderSearchTimer = null;
+      els.folderSearch.addEventListener('input', () => {
+        clearTimeout(folderSearchTimer);
+        folderSearchTimer = setTimeout(() => {
+          state.folderSearch = els.folderSearch.value.trim();
+          resetCatalog();
+        }, 200);
+      });
+
+      els.folderBackBtn.addEventListener('click', goUpFolder);
+      els.newFolderBtn.addEventListener('click', openFolderForm);
+      els.folderForm.addEventListener('submit', saveFolderForm);
+      els.ff_image.addEventListener('change', onFolderImageChange);
 
       // Sıralama (filtre menüsünde): aynı alan tekrar seçilince yön değişir
       els.sortOptions.addEventListener('click', (e) => {
@@ -2171,7 +2521,7 @@
           state.sortAsc = SORT_FIELDS[field].asc;
         }
         updateSortUI();
-        catalogPager.reset();
+        resetCatalog();
       });
 
       els.filterBtn.addEventListener('click', openFilterSheet);
@@ -2257,16 +2607,16 @@
           return { rows: data, count };
         },
         onReset: () => {
-          els.grid.replaceChildren();
+          els.partCards.replaceChildren();
           setCount(null);
         },
         onPage: (rows, count) => {
           setCount(count);
-          if (!count) {
-            els.grid.replaceChildren(h('p', 'empty', 'Bu kriterlere uygun parça bulunamadı.'));
+          if (!count && !state.foldersInView.length) {
+            els.partCards.replaceChildren(h('p', 'empty', 'Bu kriterlere uygun içerik bulunamadı.'));
             return;
           }
-          els.grid.append(...rows.map(createCard));
+          els.partCards.append(...rows.map(createCard));
         },
       });
 
@@ -2298,7 +2648,7 @@
       fillSelects();
       bindEvents();
       applyGridLayout();
-      catalogPager.reset();
+      resetCatalog();
       loadMeta().catch((err) => toast(errorMessage(err)));
     }
 
