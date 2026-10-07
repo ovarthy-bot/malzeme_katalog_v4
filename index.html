@@ -592,17 +592,17 @@
 
     /* ---------- Ayarlar ---------- */
 
-    .settings-credit {
+    .settings { padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+
+    .credit-note {
       position: absolute;
-      top: 8px;
-      right: 12px;
+      top: 6px;
+      right: 10px;
       font-size: 10px;
       color: var(--muted);
-      z-index: 1;
       pointer-events: none;
+      z-index: 1;
     }
-
-    .settings { padding: 16px; display: flex; flex-direction: column; gap: 16px; }
 
     .section-title {
       margin: 8px 0 0;
@@ -1009,7 +1009,7 @@
 
         <!-- Ayarlar -->
         <section class="view" data-view="settings">
-          <span class="settings-credit">Katkılarından dolayı İlhan Bey'e teşekkürler.</span>
+          <span class="credit-note">Uygulama tasarım fikri İlhan Bey'e aittir.</span>
           <div class="scroll settings">
             <h3 class="section-title">Görünüm</h3>
 
