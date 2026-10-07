@@ -366,8 +366,26 @@
 
     .card .sub { font-size: 11px; color: var(--muted); }
 
+    .card .card-note {
+      display: block;
+      margin-top: 2px;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      font-size: 10px;
+      color: var(--muted);
+    }
+
     .grid[data-mode="1x1"] .title { font-size: 18px; }
     .grid[data-mode="1x1"] .sub { font-size: 14px; }
+
+    .grid[data-mode="1x1"] .card-note {
+      font-size: 13px;
+      white-space: normal;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+    }
 
     .empty {
       grid-column: 1 / -1;
@@ -1850,6 +1868,9 @@
         h('span', 'title', part.material_desc || part.part_number),
         h('span', 'sub', part.material_desc ? part.part_number : '')
       );
+
+      const noteText = [part.teknisyen_agzi, part.notes].filter(Boolean).join(' • ');
+      if (noteText) meta.append(h('span', 'card-note', noteText));
 
       card.append(thumb, meta);
       card.addEventListener('click', () => openDetail(part.id));
