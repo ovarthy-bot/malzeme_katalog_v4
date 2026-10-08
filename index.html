@@ -333,11 +333,21 @@
       background: var(--surface-2);
     }
 
-    .contents { display: contents; }
+    /* Klasörler akışkan parça grid'inden ayrı, kendi bölümünde gösterilir */
+    .folder-grid {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      margin-bottom: 14px;
+    }
+
+    .folder-grid[hidden] { display: none; }
 
     /* Klasör kartları parça kartlarından ayırt edilsin diye belirgin bir çerçeve rengiyle vurgulanır */
     .folder-card {
       border: 2px solid var(--primary);
+      /* Kare yerine hafif yatay: dikeyde gereksiz uzamaz */
+      aspect-ratio: 4 / 3;
     }
 
     /* Klasör kapak görseli bir "duvar kağıdı" gibi boşluksuz, kırpılarak çerçeveyi doldurur */
@@ -403,9 +413,12 @@
       color: var(--muted);
     }
 
-    .grid[data-mode="1x1"] .title { font-size: 18px; }
-    .grid[data-mode="1x1"] .sub { font-size: 14px; }
-    .grid[data-mode="1x1"] .card-note {
+    .grid[data-mode="1x1"] .title,
+    .folder-grid[data-mode="1x1"] .title { font-size: 18px; }
+    .grid[data-mode="1x1"] .sub,
+    .folder-grid[data-mode="1x1"] .sub { font-size: 14px; }
+    .grid[data-mode="1x1"] .card-note,
+    .folder-grid[data-mode="1x1"] .card-note {
       font-size: 13px;
       white-space: normal;
       display: -webkit-box;
@@ -928,10 +941,8 @@
           </div>
 
           <div id="gridWrap" class="scroll grid-wrap">
-            <div id="grid" class="grid">
-              <div id="folderCards" class="contents"></div>
-              <div id="partCards" class="contents"></div>
-            </div>
+            <div id="folderGrid" class="folder-grid" hidden></div>
+            <div id="grid" class="grid"></div>
             <div id="gridSentinel" class="sentinel"></div>
           </div>
         </section>
@@ -1621,22 +1632,26 @@
       }
     }
 
+    // Klasör bölümünü (ayrı grid) verilen klasör listesiyle günceller; boşsa bölüm tamamen gizlenir
+    function renderFolderSection(folders) {
+      state.foldersInView = folders;
+      els.folderGrid.replaceChildren(...folders.map(createFolderCard));
+      els.folderGrid.hidden = !folders.length;
+    }
+
     // Klasör ve parça gridini şu anki klasöre (veya klasör/parça aramasına) göre yeniden çizer
     async function resetCatalog() {
       syncFolderUI();
-      els.folderCards.replaceChildren();
-      state.foldersInView = [];
 
       const folderTerm = state.folderSearch.trim();
       if (folderTerm) {
         try {
-          const folders = await searchFolderNames(folderTerm);
-          state.foldersInView = folders;
-          els.folderCards.append(...folders.map(createFolderCard));
+          renderFolderSection(await searchFolderNames(folderTerm));
         } catch (err) {
           toast(errorMessage(err));
+          renderFolderSection([]);
         }
-        els.partCards.replaceChildren();
+        els.grid.replaceChildren();
         els.resultCount.textContent = state.foldersInView.length
           ? `${state.foldersInView.length} klasör bulundu`
           : 'Eşleşen klasör bulunamadı';
@@ -1647,12 +1662,13 @@
       updateSortUI(); // Klasör aramasından çıkınca sıralama bilgisi geri gelsin
       if (!searchTerm()) {
         try {
-          const folders = await fetchChildFolders(state.currentFolderId);
-          state.foldersInView = folders;
-          els.folderCards.append(...folders.map(createFolderCard));
+          renderFolderSection(await fetchChildFolders(state.currentFolderId));
         } catch (err) {
           toast(errorMessage(err));
+          renderFolderSection([]);
         }
+      } else {
+        renderFolderSection([]); // Parça araması küreseldir, klasör bölümü gösterilmez
       }
       catalogPager.reset();
     }
@@ -1933,6 +1949,10 @@
       els.grid.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
       els.grid.style.gridAutoRows = `${Math.max(120, Math.floor(available / rows))}px`;
       els.grid.dataset.mode = state.gridMode;
+
+      // Klasör bölümü ayrı bir grid olduğu için sütun sayısını ve yazı boyutu modunu kendisi de alır
+      els.folderGrid.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+      els.folderGrid.dataset.mode = state.gridMode;
     }
 
     function setGridMode(mode) {
@@ -2698,16 +2718,16 @@
           return { rows: data, count };
         },
         onReset: () => {
-          els.partCards.replaceChildren();
+          els.grid.replaceChildren();
           setCount(null);
         },
         onPage: (rows, count) => {
           setCount(count);
           if (!count && !state.foldersInView.length) {
-            els.partCards.replaceChildren(h('p', 'empty', 'Bu kriterlere uygun içerik bulunamadı.'));
+            els.grid.replaceChildren(h('p', 'empty', 'Bu kriterlere uygun içerik bulunamadı.'));
             return;
           }
-          els.partCards.append(...rows.map(createCard));
+          els.grid.append(...rows.map(createCard));
         },
       });
 
