@@ -1030,6 +1030,17 @@
               </div>
             </div>
 
+            <h3 class="section-title">Klasörler</h3>
+
+            <div class="setting-card">
+              <span>Klasör ekleme / düzenleme / silme</span>
+              <div class="segmented">
+                <button type="button" data-folder-edit-set="on">Aktif</button>
+                <button type="button" data-folder-edit-set="off">Pasif</button>
+              </div>
+              <p class="hint">Pasif yapılırsa klasör kartlarındaki düzenle/sil tuşları ve "Yeni Klasör" butonu gizlenir.</p>
+            </div>
+
             <h3 class="section-title">Sistem</h3>
 
             <div class="setting-card">
@@ -1340,6 +1351,7 @@
       folderImageBlob: null,     // Henüz kaydedilmemiş yeni kapak görseli
       folderImagePreviewUrl: null,
       folderImageRemoved: false, // Düzenlemede mevcut görsel kaldırıldı mı
+      folderEditEnabled: prefs.get('folderEditEnabled', '1') !== '0', // Klasör ekleme/düzenleme/silme aktif mi
     };
     if (!GRID_MODES[state.gridMode]) state.gridMode = '2x3';
     if (!['light', 'dark'].includes(state.theme)) state.theme = 'light';
@@ -1588,25 +1600,31 @@
       const meta = h('div', 'meta');
       meta.append(h('span', 'title', folder.name));
 
-      const edit = h('button', 'folder-edit');
-      edit.type = 'button';
-      edit.setAttribute('aria-label', 'Klasörü düzenle');
-      setIcon(edit, 'pencil');
-      edit.addEventListener('click', (e) => {
-        e.stopPropagation();
-        openFolderForm(folder);
-      });
+      card.append(thumb, meta);
 
-      const del = h('button', 'folder-delete');
-      del.type = 'button';
-      del.setAttribute('aria-label', 'Klasörü sil');
-      setIcon(del, 'close');
-      del.addEventListener('click', (e) => {
-        e.stopPropagation();
-        deleteFolder(folder);
-      });
+      // Klasör düzenleme pasifse kart köşelerindeki düzenle/sil tuşları hiç oluşturulmaz
+      if (state.folderEditEnabled) {
+        const edit = h('button', 'folder-edit');
+        edit.type = 'button';
+        edit.setAttribute('aria-label', 'Klasörü düzenle');
+        setIcon(edit, 'pencil');
+        edit.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openFolderForm(folder);
+        });
 
-      card.append(thumb, meta, edit, del);
+        const del = h('button', 'folder-delete');
+        del.type = 'button';
+        del.setAttribute('aria-label', 'Klasörü sil');
+        setIcon(del, 'close');
+        del.addEventListener('click', (e) => {
+          e.stopPropagation();
+          deleteFolder(folder);
+        });
+
+        card.append(edit, del);
+      }
+
       card.addEventListener('click', () => enterFolder(folder));
       card.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') enterFolder(folder);
@@ -2618,6 +2636,22 @@
       });
     }
 
+    // Segmented buton durumunu ve "Yeni Klasör" butonunun görünürlüğünü günceller (DB/grid'e dokunmaz)
+    function syncFolderEditUI() {
+      const mode = state.folderEditEnabled ? 'on' : 'off';
+      document.querySelectorAll('[data-folder-edit-set]').forEach((b) => {
+        b.setAttribute('aria-pressed', String(b.dataset.folderEditSet === mode));
+      });
+      els.newFolderBtn.hidden = !state.folderEditEnabled;
+    }
+
+    function setFolderEditEnabled(enabled) {
+      state.folderEditEnabled = enabled;
+      prefs.set('folderEditEnabled', enabled ? '1' : '0');
+      syncFolderEditUI();
+      resetCatalog(); // Klasör kartlarını düzenle/sil tuşlarıyla ya da onlarsız yeniden çizer
+    }
+
     async function checkConnection() {
       const host = new URL(SUPABASE_URL).host;
       els.connDot.className = 'dot';
@@ -2743,6 +2777,9 @@
       document.querySelectorAll('[data-grid-set]').forEach((b) => {
         b.addEventListener('click', () => setGridMode(b.dataset.gridSet));
       });
+      document.querySelectorAll('[data-folder-edit-set]').forEach((b) => {
+        b.addEventListener('click', () => setFolderEditEnabled(b.dataset.folderEditSet === 'on'));
+      });
       els.connRefresh.addEventListener('click', checkConnection);
     }
 
@@ -2757,6 +2794,7 @@
 
       setTheme(state.theme);
       setGridMode(state.gridMode);
+      syncFolderEditUI();
       updateSortUI();
       updateFilterChip();
 
