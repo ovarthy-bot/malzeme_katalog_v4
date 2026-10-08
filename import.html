@@ -77,12 +77,6 @@
       font: inherit;
     }
 
-    .fields-row {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px;
-    }
-
     .btn {
       height: 44px;
       padding: 0 18px;
@@ -153,17 +147,11 @@
       </p>
       <input id="folderInput" type="file" webkitdirectory multiple>
 
-      <div class="fields-row">
-        <label class="field">
-          <span>Uçak tipi (yeni parçalar)</span>
-          <select id="acSelect"></select>
-        </label>
-        <label class="field">
-          <span>Malzeme tipi (yeni parçalar)</span>
-          <select id="mtSelect"></select>
-        </label>
-      </div>
-      <p class="hint">Bu iki alan yalnızca bu yüklemede açılan yeni parçalara yazılır. Boş bırakılabilir. Veritabanında zaten olan parçaların bu alanları değişmez.</p>
+      <label class="field">
+        <span>Malzeme tipi (yeni parçalar)</span>
+        <select id="mtSelect"></select>
+      </label>
+      <p class="hint">Bu alan yalnızca bu yüklemede açılan yeni parçalara yazılır. Boş bırakılabilir. Veritabanında zaten olan parçaların bu alanı değişmez.</p>
 
       <label class="check">
         <input id="overwrite" type="checkbox">
@@ -219,7 +207,6 @@
     const SUPABASE_URL = 'https://rkjnyexhnkiigvwnqvtx.supabase.co';
     const SUPABASE_KEY = 'sb_publishable_EmbtWNix9l-WR-kVoaWwDA_oBV2h29Z';
     const BUCKET = 'part-images';
-    const AC_TYPES = ['A320', 'A330', 'B737', 'B787', 'Ortak'];
     const MATERIAL_TYPES = ['Sarf', 'Komponent', 'Vida', 'Kimyasal', 'KKD', 'Tool'];
     const SUPPORTED_RE = /\.(jpe?g|png|webp)$/i;
     const CONCURRENCY = 3;
@@ -308,7 +295,6 @@
       els.startBtn.disabled = busy;
       els.overwrite.disabled = busy;
       els.folderInput.disabled = busy;
-      els.acSelect.disabled = busy;
       els.mtSelect.disabled = busy;
       els.descInput.disabled = busy;
     }
@@ -689,14 +675,13 @@
         if (t.existingId) ids.set(t.key, t.existingId);
       }
 
-      // 1) Yeni parçaları aç (uçak tipi ve malzeme tipi seçilen değerlerle)
+      // 1) Yeni parçaları aç (malzeme tipi seçilen değerle)
       els.progressText.textContent = 'Yeni parçalar açılıyor…';
       const created = targets.filter((t) => !t.existingId);
       for (let i = 0; i < created.length; i += INSERT_CHUNK) {
         const chunk = created.slice(i, i + INSERT_CHUNK);
         const rows = chunk.map((t) => ({
           part_number: t.partNumber,
-          ac_type: result.acType,
           material_type: result.materialType,
           material_desc: descriptions.get(t.key) ?? null,
         }));
@@ -802,7 +787,6 @@
       if (!plan || !plan.items.length) return;
 
       // Seçimler yükleme anında okunur
-      plan.acType = els.acSelect.value || null;
       plan.materialType = els.mtSelect.value || null;
       plan.descriptions = parseDescriptions(els.descInput.value);
 
@@ -827,7 +811,6 @@
 
     els.csvBtn.addEventListener('click', downloadFailures);
 
-    fillSelectOptions(els.acSelect, AC_TYPES);
     fillSelectOptions(els.mtSelect, MATERIAL_TYPES);
 
     if (!window.supabase) {

@@ -340,6 +340,14 @@
       border: 2px solid var(--primary);
     }
 
+    /* Klasör kapak görseli bir "duvar kağıdı" gibi boşluksuz, kırpılarak çerçeveyi doldurur */
+    .folder-card .thumb img {
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
     .folder-edit,
     .folder-delete {
       position: absolute;
@@ -385,17 +393,6 @@
 
     .card .sub { font-size: 11px; color: var(--muted); }
 
-    .card .card-ac {
-      display: block;
-      margin-top: 2px;
-      overflow: hidden;
-      white-space: nowrap;
-      text-overflow: ellipsis;
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: .02em;
-    }
-
     .card .card-note {
       display: block;
       margin-top: 2px;
@@ -408,8 +405,6 @@
 
     .grid[data-mode="1x1"] .title { font-size: 18px; }
     .grid[data-mode="1x1"] .sub { font-size: 14px; }
-    .grid[data-mode="1x1"] .card-ac { font-size: 13px; }
-
     .grid[data-mode="1x1"] .card-note {
       font-size: 13px;
       white-space: normal;
@@ -427,7 +422,7 @@
 
     .sentinel { height: 1px; }
 
-    /* ---------- Listeler (Uçak tipleri, Teknisyen notları) ---------- */
+    /* ---------- Listeler (Teknisyen notları) ---------- */
 
     .list-wrap { padding: 12px; }
 
@@ -941,13 +936,6 @@
           </div>
         </section>
 
-        <!-- Uçak tipleri -->
-        <section class="view" data-view="types">
-          <div class="scroll list-wrap">
-            <div id="typesList" class="list"></div>
-          </div>
-        </section>
-
         <!-- Teknisyen notları -->
         <section class="view" data-view="notes">
           <div id="notesWrap" class="scroll list-wrap">
@@ -968,11 +956,6 @@
               <div class="field">
                 <label for="f_folder">Klasör</label>
                 <select id="f_folder" name="folder_id"></select>
-              </div>
-
-              <div class="field">
-                <label for="f_ac_type">Uçak tipi *</label>
-                <select id="f_ac_type" name="ac_type" required></select>
               </div>
 
               <div class="field">
@@ -1113,10 +1096,6 @@
         </div>
       </div>
       <div>
-        <h3>Uçak tipi</h3>
-        <div id="acOptions" class="pills"></div>
-      </div>
-      <div>
         <h3>Malzeme tipi</h3>
         <div id="mtOptions" class="pills"></div>
       </div>
@@ -1191,26 +1170,8 @@
     const SUPABASE_KEY = 'sb_publishable_EmbtWNix9l-WR-kVoaWwDA_oBV2h29Z';
     const BUCKET = 'part-images';
     const PAGE_SIZE = 30;
-    const AC_TYPES = ['A320', 'A330', 'B737', 'B787', 'Ortak'];
     const MATERIAL_TYPES = ['Sarf', 'Komponent', 'Vida', 'Kimyasal', 'KKD', 'Tool'];
-
-    // Katalog kartlarında uçak tipi etiketi için sinematik, koyu ton renk paleti
-    const AC_TYPE_COLORS = {
-      A320: 'hsl(212, 58%, 42%)',  // koyu safir mavisi
-      A330: 'hsl(345, 55%, 40%)',  // koyu bordo
-      B737: 'hsl(152, 48%, 34%)',  // koyu zümrüt yeşili
-      B787: 'hsl(268, 42%, 45%)',  // koyu mor
-      Ortak: 'hsl(32, 58%, 38%)',  // koyu kehribar
-    };
-
-    // AC_TYPES dışındaki (eski/beklenmeyen) değerler için isme göre sabit koyu renk üretir
-    function colorForAcType(acType) {
-      if (AC_TYPE_COLORS[acType]) return AC_TYPE_COLORS[acType];
-      let hash = 0;
-      for (let i = 0; i < acType.length; i++) hash = (hash * 31 + acType.charCodeAt(i)) >>> 0;
-      return `hsl(${hash % 360}, 50%, 40%)`;
-    }
-    const LAST_CHOICE_KEYS = { ac_type: 'lastAcType', material_type: 'lastMaterialType' };
+    const LAST_CHOICE_KEYS = { material_type: 'lastMaterialType' };
     const NO_VALUE = '__none__'; // Filtrede "Belirtilmemiş" (alan boş) seçeneği
 
     // Görsel sıkıştırma: Supabase'e 5 MB sınırı sunucu tarafında kalır, istemci hedefi çok altındadır
@@ -1237,7 +1198,6 @@
 
     const TITLES = {
       catalog: 'Uçak Parçaları Rehberi',
-      types: 'Uçak Tipleri',
       notes: 'Teknisyen Notları',
       form: 'Yeni Parça',
       settings: 'Ayarlar',
@@ -1295,16 +1255,13 @@
       },
     };
 
-    // Son kullanılan filtreler (uçak tipi / malzeme tipi) cihazda saklanır
+    // Son kullanılan filtreler (malzeme tipi) cihazda saklanır
     function loadSavedFilters() {
       try {
         const saved = JSON.parse(prefs.get('filters', 'null')) || {};
-        return {
-          ac: Array.isArray(saved.ac) ? saved.ac : [],
-          mt: Array.isArray(saved.mt) ? saved.mt : [],
-        };
+        return { mt: Array.isArray(saved.mt) ? saved.mt : [] };
       } catch {
-        return { ac: [], mt: [] };
+        return { mt: [] };
       }
     }
 
@@ -1330,11 +1287,9 @@
       search: '',
       sortField: savedSort.field,
       sortAsc: savedSort.asc,
-      acFilter: new Set(savedFilters.ac),
       mtFilter: new Set(savedFilters.mt),
       gridMode: prefs.get('gridMode', '2x3'),
       theme: prefs.get('theme', 'light'),
-      acCounts: new Map(),
       mtValues: [],
       editing: null,         // Düzenlenen parça (yeni parça için null)
       formExisting: [],      // Formdaki mevcut görseller (part_images satırları)
@@ -1435,31 +1390,24 @@
       }
     }
 
-    // ac_type / material_type seçenekleri ve uçak tipi sayıları (DISTINCT, istemci tarafında)
+    // material_type seçenekleri (DISTINCT, istemci tarafında)
     async function loadMeta() {
-      const rows = await fetchAll('ac_type, material_type');
-      const counts = new Map();
+      const rows = await fetchAll('material_type');
       const materials = new Set();
-      let noAc = 0;
       let noMt = 0;
       for (const r of rows) {
-        if (r.ac_type) counts.set(r.ac_type, (counts.get(r.ac_type) || 0) + 1);
-        else noAc++;
         if (r.material_type) materials.add(r.material_type);
         else noMt++;
       }
       // Boş alanlı parçalar filtrede "Belirtilmemiş" olarak görünür (yalnızca varsa)
-      if (noAc) counts.set(NO_VALUE, noAc);
-      state.acCounts = counts;
       state.mtValues = [...(noMt ? [NO_VALUE] : []), ...[...materials].sort(trSort)];
     }
 
-    // Uçak tipi ve malzeme tipi seçenekleri sabit listeden gelir
+    // Malzeme tipi seçenekleri sabit listeden gelir
     function fillSelects() {
       const fill = (select, values) => {
         select.replaceChildren(new Option('Seçiniz', ''), ...values.map((v) => new Option(v, v)));
       };
-      fill(els.f_ac_type, AC_TYPES);
       fill(els.f_material_type, MATERIAL_TYPES);
     }
 
@@ -1471,10 +1419,9 @@
       select.value = value || '';
     }
 
-    function lastChoice(name) {
-      const allowed = name === 'ac_type' ? AC_TYPES : MATERIAL_TYPES;
-      const saved = prefs.get(LAST_CHOICE_KEYS[name], '');
-      return allowed.includes(saved) ? saved : '';
+    function lastChoice() {
+      const saved = prefs.get(LAST_CHOICE_KEYS.material_type, '');
+      return MATERIAL_TYPES.includes(saved) ? saved : '';
     }
 
     function searchTerm() {
@@ -1500,7 +1447,6 @@
 
     function catalogQuery() {
       let q = sb.from('parts').select('*', { count: 'exact' });
-      if (state.acFilter.size) q = applyListFilter(q, 'ac_type', state.acFilter);
       if (state.mtFilter.size) q = applyListFilter(q, 'material_type', state.mtFilter);
 
       const term = searchTerm();
@@ -1959,12 +1905,6 @@
         h('span', 'sub', part.material_desc ? part.part_number : '')
       );
 
-      if (part.ac_type) {
-        const acBadge = h('span', 'card-ac', part.ac_type);
-        acBadge.style.color = colorForAcType(part.ac_type);
-        meta.append(acBadge);
-      }
-
       const noteText = [part.teknisyen_agzi, part.notes].filter(Boolean).join(' • ');
       if (noteText) meta.append(h('span', 'card-note', noteText));
 
@@ -2021,29 +1961,22 @@
 
     // Çipi, filtre butonunu ve kayıtlı filtreleri filtre durumuna göre günceller
     function updateFilterChip() {
-      const ac = [...state.acFilter];
       const mt = [...state.mtFilter];
-      const active = ac.length > 0 || mt.length > 0;
-      let text = `Filtre: ${ac.length ? ac.map(filterLabel).join(', ') : 'Tümü'}`;
-      if (mt.length) text += ` | ${mt.map(filterLabel).join(', ')}`;
-      els.filterChip.textContent = text;
+      const active = mt.length > 0;
+      els.filterChip.textContent = `Filtre: ${active ? mt.map(filterLabel).join(', ') : 'Tümü'}`;
       els.filterChip.disabled = !active;
       els.filterChip.title = active ? 'Filtreleri temizle' : '';
       els.filterBtn.setAttribute('aria-pressed', String(active));
-      prefs.set('filters', JSON.stringify({ ac, mt }));
+      prefs.set('filters', JSON.stringify({ mt }));
     }
 
     function clearFilters() {
-      state.acFilter = new Set();
       state.mtFilter = new Set();
       updateFilterChip();
       resetCatalog();
     }
 
     function openFilterSheet() {
-      const acKeys = [...state.acCounts.keys()].filter((k) => k !== NO_VALUE).sort(trSort);
-      if (state.acCounts.has(NO_VALUE)) acKeys.unshift(NO_VALUE);
-      buildPills(els.acOptions, acKeys, state.acFilter, state.acCounts);
       buildPills(els.mtOptions, state.mtValues, state.mtFilter);
       els.filterSheet.showModal();
     }
@@ -2066,45 +1999,10 @@
     }
 
     function applyFilters() {
-      state.acFilter = checkedValues(els.acOptions);
       state.mtFilter = checkedValues(els.mtOptions);
       els.filterSheet.close();
       updateFilterChip();
       resetCatalog();
-    }
-
-    /* ==========================================================
-       Uçak tipleri
-       ========================================================== */
-
-    function renderTypes() {
-      const entries = [...state.acCounts.entries()]
-        .filter(([name]) => name !== NO_VALUE)
-        .sort((a, b) => trSort(a[0], b[0]));
-      if (!entries.length) {
-        els.typesList.replaceChildren(h('p', 'empty', 'Henüz uçak tipi yok.'));
-        return;
-      }
-
-      els.typesList.replaceChildren(...entries.map(([name, count]) => {
-        const row = h('button', 'list-row');
-        row.type = 'button';
-        const main = h('span', 'list-main');
-        main.append(h('span', 'list-title', name), h('span', 'list-sub', `${count} parça`));
-        const chev = h('span', 'chev');
-        chev.innerHTML = svg(ICONS.chevron);
-        row.append(main, chev);
-        row.addEventListener('click', () => {
-          state.acFilter = new Set([name]);
-          state.mtFilter = new Set();
-          state.currentFolderId = null;
-          state.folderStack = [];
-          updateFilterChip();
-          navigate('catalog');
-          resetCatalog();
-        });
-        return row;
-      }));
     }
 
     /* ==========================================================
@@ -2172,7 +2070,6 @@
       els.detailPn.textContent = part.part_number;
 
       const fields = [
-        ['Uçak tipi', part.ac_type],
         ['Malzeme tipi', part.material_type],
         ['Teknisyen ağzı', part.teknisyen_agzi],
         ['Notlar', part.notes],
@@ -2308,13 +2205,11 @@
         ['part_number', 'material_desc', 'teknisyen_agzi', 'notes'].forEach((name) => {
           form.elements[name].value = part[name] ?? '';
         });
-        setSelectValue(form.elements.ac_type, part.ac_type);
         setSelectValue(form.elements.material_type, part.material_type);
         await fillFolderSelect(els.f_folder, part.folder_id);
       } else {
-        // Yeni parçada son seçilen değerler otomatik gelir
-        form.elements.ac_type.value = lastChoice('ac_type');
-        form.elements.material_type.value = lastChoice('material_type');
+        // Yeni parçada son seçilen değer otomatik gelir
+        form.elements.material_type.value = lastChoice();
         // Hangi klasör içinde geziniliyorsa yeni parça oraya eklenir
         await fillFolderSelect(els.f_folder, state.currentFolderId);
       }
@@ -2490,15 +2385,14 @@
       const payload = {
         part_number: read('part_number'),
         folder_id: form.elements.folder_id.value || null,
-        ac_type: read('ac_type'),
         material_type: read('material_type'),
         material_desc: read('material_desc'),
         teknisyen_agzi: read('teknisyen_agzi'),
         notes: read('notes'),
       };
 
-      if (!payload.part_number || !payload.ac_type || !payload.material_type) {
-        toast('Parça no, uçak tipi ve malzeme tipi zorunludur.');
+      if (!payload.part_number || !payload.material_type) {
+        toast('Parça no ve malzeme tipi zorunludur.');
         return;
       }
 
@@ -2558,7 +2452,6 @@
       });
 
       if (name === 'catalog') syncFolderUI();
-      if (name === 'types') renderTypes();
       if (name === 'notes') notesPager.reset();
       if (name === 'settings') checkConnection();
     }
@@ -2765,10 +2658,8 @@
 
       els.partForm.addEventListener('submit', savePart);
       els.f_image.addEventListener('change', onImageChange);
-      ['ac_type', 'material_type'].forEach((name) => {
-        els.partForm.elements[name].addEventListener('change', (e) => {
-          prefs.set(LAST_CHOICE_KEYS[name], e.target.value);
-        });
+      els.partForm.elements.material_type.addEventListener('change', (e) => {
+        prefs.set(LAST_CHOICE_KEYS.material_type, e.target.value);
       });
 
       document.querySelectorAll('[data-theme-set]').forEach((b) => {
