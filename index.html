@@ -358,6 +358,43 @@
       object-fit: cover;
     }
 
+    /* Klasör adı artık görselin altında ayrı yer kaplamaz; resmin üzerine bindirilir
+       ki kapak görseli kartın tamamını kullanabilsin */
+    .folder-card .meta {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 3px;
+      padding: 20px 8px 6px;
+      background: linear-gradient(to top, rgba(0, 0, 0, .7), rgba(0, 0, 0, 0));
+      pointer-events: none;
+    }
+
+    .folder-card .meta .title {
+      color: #fff;
+      text-shadow: 0 1px 3px rgba(0, 0, 0, .7);
+    }
+
+    /* Alt klasörün ait olduğu üst klasörü gösteren küçük etiket; sağ alt köşeye hizalanır */
+    .folder-card .meta .parent-tag {
+      align-self: flex-end;
+      max-width: 100%;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      padding: 1px 6px;
+      border-radius: 8px;
+      font-size: 9px;
+      font-weight: 700;
+      color: #fff;
+      text-shadow: none;
+    }
+
     .folder-edit,
     .folder-delete {
       position: absolute;
@@ -1486,6 +1523,29 @@
       return data;
     }
 
+    // Verilen klasör listesindeki üst klasörlerden önbellekte olmayanları tek sorguda çekip
+    // önbelleğe ekler; alt klasör kartlarında üst klasör etiketi gösterebilmek için kullanılır
+    async function ensureParentNamesCached(folders) {
+      const missingIds = [...new Set(
+        folders.map((f) => f.parent_id).filter((id) => id && !state.foldersCache.has(id))
+      )];
+      if (!missingIds.length) return;
+      const { data, error } = await sb.from('folders').select('*').in('id', missingIds);
+      if (error || !data) return; // sessizce yoksay: etiket o kart için gösterilmez
+      data.forEach((f) => state.foldersCache.set(f.id, f));
+    }
+
+    // Bir metni (üst klasör adını) sabit, ayırt edici bir renge çevirir; aynı ad her zaman aynı rengi alır
+    function labelColor(text) {
+      let hash = 0;
+      for (let i = 0; i < text.length; i++) {
+        hash = text.charCodeAt(i) + ((hash << 5) - hash);
+        hash |= 0;
+      }
+      const hue = Math.abs(hash) % 360;
+      return `hsl(${hue}, 65%, 38%)`;
+    }
+
     async function fetchChildFolders(parentId) {
       let q = sb.from('folders').select('*');
       q = parentId ? q.eq('parent_id', parentId) : q.is('parent_id', null);
@@ -1556,6 +1616,15 @@
 
       const meta = h('div', 'meta');
       meta.append(h('span', 'title', folder.name));
+
+      // Alt klasörler, üst klasörün adını sağ alt köşede küçük bir etiket olarak taşır;
+      // etiket rengi üst klasör adına göre sabitlenir ki her üst klasör kendi rengiyle ayırt edilsin
+      const parent = folder.parent_id ? state.foldersCache.get(folder.parent_id) : null;
+      if (parent) {
+        const tag = h('span', 'parent-tag', parent.name);
+        tag.style.background = labelColor(parent.name);
+        meta.append(tag);
+      }
 
       card.append(thumb, meta);
 
@@ -1633,8 +1702,9 @@
     }
 
     // Klasör bölümünü (ayrı grid) verilen klasör listesiyle günceller; boşsa bölüm tamamen gizlenir
-    function renderFolderSection(folders) {
+    async function renderFolderSection(folders) {
       state.foldersInView = folders;
+      await ensureParentNamesCached(folders); // kart etiketleri için üst klasör adları hazır olsun
       els.folderGrid.replaceChildren(...folders.map(createFolderCard));
       els.folderGrid.hidden = !folders.length;
     }
@@ -1646,10 +1716,10 @@
       const folderTerm = state.folderSearch.trim();
       if (folderTerm) {
         try {
-          renderFolderSection(await searchFolderNames(folderTerm));
+          await renderFolderSection(await searchFolderNames(folderTerm));
         } catch (err) {
           toast(errorMessage(err));
-          renderFolderSection([]);
+          await renderFolderSection([]);
         }
         els.grid.replaceChildren();
         els.resultCount.textContent = state.foldersInView.length
@@ -1662,13 +1732,13 @@
       updateSortUI(); // Klasör aramasından çıkınca sıralama bilgisi geri gelsin
       if (!searchTerm()) {
         try {
-          renderFolderSection(await fetchChildFolders(state.currentFolderId));
+          await renderFolderSection(await fetchChildFolders(state.currentFolderId));
         } catch (err) {
           toast(errorMessage(err));
-          renderFolderSection([]);
+          await renderFolderSection([]);
         }
       } else {
-        renderFolderSection([]); // Parça araması küreseldir, klasör bölümü gösterilmez
+        await renderFolderSection([]); // Parça araması küreseldir, klasör bölümü gösterilmez
       }
       catalogPager.reset();
     }
