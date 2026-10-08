@@ -426,6 +426,26 @@
       object-fit: contain;
     }
 
+    /* Katalog görselinin ait olduğu kök klasörü gösteren sanal etiket; alt klasör
+       etiketleriyle aynı görsel dilde, görselin sağ alt köşesine bindirilir */
+    .thumb .root-tag {
+      position: absolute;
+      right: 4px;
+      bottom: 4px;
+      z-index: 1;
+      max-width: calc(100% - 8px);
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      padding: 1px 6px;
+      border-radius: 8px;
+      font-size: 9px;
+      font-weight: 700;
+      color: #fff;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, .55);
+      pointer-events: none;
+    }
+
     .card .meta { padding: 6px 8px 8px; min-width: 0; }
 
     .card .title,
@@ -1222,6 +1242,10 @@
     const LAST_CHOICE_KEYS = { material_type: 'lastMaterialType' };
     const NO_VALUE = '__none__'; // Filtrede "Belirtilmemiş" (alan boş) seçeneği
 
+    // Hiçbir klasöre atanmamış ("öksüz") parçaları toplayan, veritabanında karşılığı olmayan sanal klasör
+    const ORPHAN_FOLDER_ID = '__orphan__';
+    const ORPHAN_FOLDER_NAME = 'Karışık';
+
     // Görsel sıkıştırma: Supabase'e 5 MB sınırı sunucu tarafında kalır, istemci hedefi çok altındadır
     const IMAGE_MAX_INPUT_BYTES = 50 * 1024 * 1024;
     const IMAGE_MAX_SIDE = 1280;
@@ -1348,6 +1372,9 @@
       currentFolderId: null,  // null: kök dizin
       folderStack: [],        // Kökten şu anki klasöre kadar olan id zinciri
       folderSearch: '',
+      // Öksüz parçaları toplayan "Karışık" klasörünün id'si: kökte aynı adda gerçek bir
+      // klasör varsa onun id'si, yoksa sanal ORPHAN_FOLDER_ID; hiç öksüz yoksa null
+      orphanFolderId: null,
       foldersCache: new Map(),
       foldersInView: [],
       editingFolder: null,       // Düzenlenen klasör (yeni klasör için null)
@@ -1503,8 +1530,14 @@
         q = q.or(['part_number', 'material_desc', 'notes', 'teknisyen_agzi']
           .map((col) => `${col}.ilike.*${term}*`)
           .join(','));
+      } else if (state.currentFolderId && state.currentFolderId === state.orphanFolderId) {
+        // "Karışık" klasörü (gerçek ya da sanal): öksüz parçaları, gerçek bir klasörse
+        // ayrıca doğrudan ona atanmış parçaları da gösterir
+        q = state.currentFolderId === ORPHAN_FOLDER_ID
+          ? q.is('folder_id', null)
+          : q.or(`folder_id.is.null,folder_id.eq.${state.currentFolderId}`);
       } else {
-        q = state.currentFolderId ? q.eq('folder_id', state.currentFolderId) : q.is('folder_id', null);
+        q = q.eq('folder_id', state.currentFolderId);
       }
 
       return q
@@ -1535,6 +1568,36 @@
       data.forEach((f) => state.foldersCache.set(f.id, f));
     }
 
+    // Verilen klasör id listesindeki her klasörün kök atasına kadar olan zincirini önbelleğe alır;
+    // parça kartlarında "ait olduğu kök klasör" etiketini senkron biçimde okuyabilmek için kullanılır
+    async function ensureFolderChainsCached(folderIds) {
+      let frontier = [...new Set(folderIds.filter(Boolean))];
+      let guard = 0;
+      while (frontier.length && guard++ < 10) {
+        const missing = [...new Set(frontier.filter((id) => !state.foldersCache.has(id)))];
+        if (missing.length) {
+          const { data, error } = await sb.from('folders').select('*').in('id', missing);
+          if (error || !data) break;
+          data.forEach((f) => state.foldersCache.set(f.id, f));
+        }
+        frontier = [...new Set(
+          frontier.map((id) => state.foldersCache.get(id)?.parent_id).filter(Boolean)
+        )];
+      }
+    }
+
+    // Bir parçanın ait olduğu kök (en üstteki) klasörün adını döndürür; parça hiçbir klasöre
+    // atanmamışsa (öksüzse) öksüz parçaları topladığımız sanal "Karışık" klasörünün adı döner
+    function rootFolderName(folderId) {
+      if (!folderId) return ORPHAN_FOLDER_NAME;
+      let current = state.foldersCache.get(folderId);
+      let guard = 0;
+      while (current && current.parent_id && guard++ < 10) {
+        current = state.foldersCache.get(current.parent_id);
+      }
+      return current ? current.name : null;
+    }
+
     // Bir metni (üst klasör adını) sabit, ayırt edici bir renge çevirir; aynı ad her zaman aynı rengi alır
     function labelColor(text) {
       let hash = 0;
@@ -1546,12 +1609,41 @@
       return `hsl(${hue}, 65%, 38%)`;
     }
 
+    // Sanal "Karışık" klasör nesnesini oluşturup önbelleğe alır (DB'de karşılığı yoktur)
+    function makeOrphanFolder() {
+      const folder = { id: ORPHAN_FOLDER_ID, name: ORPHAN_FOLDER_NAME, parent_id: null, bg_image_url: null, virtual: true };
+      state.foldersCache.set(folder.id, folder);
+      return folder;
+    }
+
+    // Hiçbir klasöre atanmamış (folder_id boş) en az bir parça olup olmadığını kontrol eder
+    async function hasOrphanParts() {
+      const { count, error } = await sb.from('parts').select('id', { count: 'exact', head: true }).is('folder_id', null);
+      if (error) return false;
+      return !!count;
+    }
+
     async function fetchChildFolders(parentId) {
+      if (parentId === ORPHAN_FOLDER_ID) return []; // sanal klasörün gerçek alt klasörü olamaz
       let q = sb.from('folders').select('*');
       q = parentId ? q.eq('parent_id', parentId) : q.is('parent_id', null);
       const { data, error } = await q;
       if (error) throw error;
-      return data.sort((a, b) => trSort(a.name, b.name));
+      const folders = data.sort((a, b) => trSort(a.name, b.name));
+      if (!parentId) {
+        // Kökte "Karışık" adında gerçek bir klasör zaten varsa (ör. elle oluşturulmuş, kendi kapak
+        // görseliyle) öksüz parçalar otomatik olarak ona yönlendirilir; yoksa sanal bir tane eklenir
+        const real = folders.find((f) => f.name === ORPHAN_FOLDER_NAME);
+        if (real) {
+          state.orphanFolderId = real.id;
+        } else if (await hasOrphanParts()) {
+          state.orphanFolderId = ORPHAN_FOLDER_ID;
+          folders.push(makeOrphanFolder());
+        } else {
+          state.orphanFolderId = null;
+        }
+      }
+      return folders;
     }
 
     async function searchFolderNames(term) {
@@ -1628,8 +1720,9 @@
 
       card.append(thumb, meta);
 
-      // Klasör düzenleme pasifse kart köşelerindeki düzenle/sil tuşları hiç oluşturulmaz
-      if (state.folderEditEnabled) {
+      // Klasör düzenleme pasifse ya da bu sanal bir klasörse (DB'de karşılığı yok, ör. "Karışık")
+      // kart köşelerindeki düzenle/sil tuşları hiç oluşturulmaz
+      if (state.folderEditEnabled && !folder.virtual) {
         const edit = h('button', 'folder-edit');
         edit.type = 'button';
         edit.setAttribute('aria-label', 'Klasörü düzenle');
@@ -1699,6 +1792,12 @@
         const folder = state.currentFolderId ? state.foldersCache.get(state.currentFolderId) : null;
         els.pageTitle.textContent = folder ? folder.name : TITLES.catalog;
       }
+      updateNewFolderBtnVisibility();
+    }
+
+    // Sanal "Karışık" klasörünün DB karşılığı yoktur; içindeyken yeni klasör oluşturulamaz
+    function updateNewFolderBtnVisibility() {
+      els.newFolderBtn.hidden = !state.folderEditEnabled || state.currentFolderId === ORPHAN_FOLDER_ID;
     }
 
     // Klasör bölümünü (ayrı grid) verilen klasör listesiyle günceller; boşsa bölüm tamamen gizlenir
@@ -1955,7 +2054,7 @@
           this.offset += rows.length;
           this.hasMore = rows.length === PAGE_SIZE;
           this.loading = false;
-          this.onPage(rows, count);
+          await this.onPage(rows, count);
           // Sayfa ekranı doldurmadıysa bir sonrakini de çek
           if (this.hasMore && this.root.scrollHeight - this.root.clientHeight < 240) this.loadMore();
         } catch (err) {
@@ -1984,6 +2083,15 @@
       img.alt = part.material_desc || part.part_number;
       setImage(img, part.image_url);
       thumb.append(img);
+
+      // Parçanın ait olduğu kök klasörün adı, alt klasör etiketleriyle aynı mantıkla
+      // görselin sağ alt köşesine sanal bir etiket olarak eklenir (DB'de saklanmaz)
+      const rootName = rootFolderName(part.folder_id);
+      if (rootName) {
+        const tag = h('span', 'root-tag', rootName);
+        tag.style.background = labelColor(rootName);
+        thumb.append(tag);
+      }
 
       const meta = h('div', 'meta');
       meta.append(
@@ -2625,7 +2733,7 @@
       document.querySelectorAll('[data-folder-edit-set]').forEach((b) => {
         b.setAttribute('aria-pressed', String(b.dataset.folderEditSet === mode));
       });
-      els.newFolderBtn.hidden = !state.folderEditEnabled;
+      updateNewFolderBtnVisibility();
     }
 
     function setFolderEditEnabled(enabled) {
@@ -2783,6 +2891,9 @@
         root: els.gridWrap,
         sentinel: els.gridSentinel,
         fetchPage: async (from, size) => {
+          // Gerçek kök dizinde (klasör seçili değil, arama yok) parçalar artık doğrudan
+          // gösterilmez; öksüz parçalar sanal "Karışık" klasörünün içinde listelenir
+          if (!state.currentFolderId && !searchTerm()) return { rows: [], count: 0 };
           const { data, error, count } = await catalogQuery().range(from, from + size - 1);
           if (error) throw error;
           return { rows: data, count };
@@ -2791,12 +2902,14 @@
           els.grid.replaceChildren();
           setCount(null);
         },
-        onPage: (rows, count) => {
+        onPage: async (rows, count) => {
           setCount(count);
           if (!count && !state.foldersInView.length) {
             els.grid.replaceChildren(h('p', 'empty', 'Bu kriterlere uygun içerik bulunamadı.'));
             return;
           }
+          // Kart üzerinde kök klasör etiketini gösterebilmek için üst klasör zincirlerini önbelleğe al
+          await ensureFolderChainsCached(rows.map((r) => r.folder_id));
           els.grid.append(...rows.map(createCard));
         },
       });
