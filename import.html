@@ -143,7 +143,9 @@
       <p class="hint">
         Dosya adı parça numarası olmalı, örneğin <b>HCB31-1195.jpg</b>. Aynı parçanın ek görselleri
         <b>HCB31-1195 (1).jpg</b> ve <b>HCB31-1195 (2).jpg</b> şeklinde adlandırılır. Veritabanında olmayan
-        parça numaraları için yeni parça açılır. Alt klasörler dahil edilmez.
+        parça numaraları için yeni parça açılır. Seçilen klasörün içindeki alt klasörler (ör. <b>A320 Karışık</b>,
+        <b>A330 Karışık</b>) adı aynı olan uygulama klasörüne göre dağıtılır: yeni parçalar o klasöre açılır,
+        klasörü boş olan mevcut parçalar o klasöre taşınır. Eşleşmeyen alt klasörler atlanır.
       </p>
       <input id="folderInput" type="file" webkitdirectory multiple>
 
@@ -459,7 +461,7 @@
        ========================================================== */
 
     // Dosyaları parça numarasına göre gruplar: mevcut parçalara ekle, yoksa yeni parça aç
-    function buildPlan({ rootFiles, subCount, parts, images, overwrite, usage }) {
+    function buildPlan({ rootFiles, subFiles, skippedFolders, subCount, parts, images, folders, rootName, overwrite, usage }) {
       const existingByKey = new Map(parts.map((p) => [keyOf(p.part_number), p]));
       const doneKeys = new Set(images.filter((i) => i.source_name).map((i) => `${i.part_id}|${i.source_name}`));
       const maxPosition = new Map();
@@ -467,7 +469,17 @@
         maxPosition.set(img.part_id, Math.max(maxPosition.get(img.part_id) ?? -1, img.position));
       }
 
+      // Alt klasör adı -> uygulamadaki klasör id'si (ada göre, büyük/küçük harf ve Türkçe karakter duyarsız)
+      const folderByName = new Map();
+      for (const f of folders) {
+        const k = keyOf(f.name);
+        if (!folderByName.has(k)) folderByName.set(k, f.id);
+      }
+      const rootFolderId = folderByName.get(keyOf(rootName)) ?? null;
+
       const result = {
+        folderPlacement: new Map(), // klasör adı -> { id, count } (ön izleme için)
+        unmatchedFolders: new Map(), // eşleşmeyen alt klasör adı -> dosya sayısı
         items: [],
         skipped: [],
         done: [],
@@ -479,7 +491,15 @@
       };
 
       const candidates = [];
-      for (const file of rootFiles) {
+      const allFiles = [
+        ...rootFiles.map((file) => ({ file, folderName: rootName, folderId: rootFolderId })),
+        ...subFiles.map(({ file, folderName }) => ({ file, folderName, folderId: folderByName.get(keyOf(folderName)) ?? null })),
+      ];
+      for (const { file, folderName, folderId } of allFiles) {
+        if (folderId == null && file.webkitRelativePath.split('/').length > 2) {
+          result.unmatchedFolders.set(folderName, (result.unmatchedFolders.get(folderName) ?? 0) + 1);
+          continue;
+        }
         if (!SUPPORTED_RE.test(file.name)) {
           result.skipped.push(file.name);
           continue;
@@ -491,7 +511,7 @@
           result.done.push(file.name);
           continue;
         }
-        candidates.push({ file, key, partNumber, index, existing });
+        candidates.push({ file, key, partNumber, index, existing, folderId });
       }
 
       candidates.sort((a, b) => a.key.localeCompare(b.key, 'tr') || a.index - b.index || a.file.name.localeCompare(b.file.name, 'tr'));
@@ -503,17 +523,33 @@
             key: c.key,
             partNumber: c.partNumber,
             existingId,
+            folderIds: new Set(), // dosyaların bulunduğu (eşleşen) klasörler
+            existingFolderId: c.existing?.folder_id ?? null,
             // Üzerine yazılıyorsa sıra 0'dan, aksi halde mevcut görsellerin arkasından başlar
             nextPosition: existingId && !overwrite ? (maxPosition.get(existingId) ?? -1) + 1 : 0,
+            needsFolder: !c.existing || c.existing.folder_id == null,
           });
         }
         const target = result.targets.get(c.key);
+        if (c.folderId != null) target.folderIds.add(c.folderId);
         result.items.push({
           file: c.file,
           key: c.key,
           partNumber: target.partNumber,
           position: target.nextPosition++,
         });
+      }
+
+      result.shortcutCount = 0;
+      for (const t of result.targets.values()) {
+        // Asıl klasör: parçanın mevcut klasörü, yoksa ilk eşleşen klasör; diğerleri kısayol olur
+        t.folderId = t.existingFolderId ?? [...t.folderIds][0] ?? null;
+        t.shortcutIds = [...t.folderIds].filter((id) => id !== t.folderId);
+        result.shortcutCount += t.shortcutIds.length;
+        if (t.folderId == null || !t.needsFolder) continue;
+        const entry = result.folderPlacement.get(t.folderId) ?? { name: folders.find((f) => f.id === t.folderId)?.name, count: 0 };
+        entry.count++;
+        result.folderPlacement.set(t.folderId, entry);
       }
 
       return result;
@@ -556,6 +592,9 @@
         ['Zaten yüklü (atlanacak)', result.done.length],
         ['Desteklenmeyen format', result.skipped.length],
         ['Alt klasör dosyaları (dahil değil)', result.subCount],
+        ['Birden çok klasörde (kısayol eklenecek)', result.shortcutCount],
+        ...[...result.folderPlacement.values()].map((e) => [`Klasöre atanacak: ${e.name}`, `${e.count} parça`]),
+        ...[...result.unmatchedFolders].map(([name, n]) => [`Eşleşmeyen klasör (atlanacak): ${name}`, `${n} dosya`]),
         ['Tahmini depolama (en fazla)', `${toMb(uploadBytes)} MB`],
       ];
       els.summary.replaceChildren(
@@ -602,21 +641,27 @@
         return;
       }
 
-      // Yalnızca seçilen klasörün kökü: "Klasör/dosya.jpg" (iki parça)
-      const rootFiles = files.filter((f) => f.webkitRelativePath.split('/').length === 2);
-      const subCount = files.length - rootFiles.length;
+      // Seçilen klasörün kökü: "Klasör/dosya.jpg"; bir alt seviye: "Klasör/Alt/dosya.jpg" (alt klasör adı hedef klasörü belirler)
+      const depth = (f) => f.webkitRelativePath.split('/').length;
+      const rootFiles = files.filter((f) => depth(f) === 2);
+      const subFiles = files
+        .filter((f) => depth(f) === 3)
+        .map((file) => ({ file, folderName: file.webkitRelativePath.split('/')[1] }));
+      const subCount = files.length - rootFiles.length - subFiles.length;
+      const rootName = files[0].webkitRelativePath.split('/')[0];
 
       els.previewCard.hidden = false;
       els.summary.replaceChildren(...addRow('Durum', 'Taranıyor…'));
 
       try {
-        const [parts, images, usage] = await Promise.all([
-          fetchAllRows('parts', 'id, part_number'),
+        const [parts, images, folders, usage] = await Promise.all([
+          fetchAllRows('parts', 'id, part_number, folder_id'),
           fetchAllRows('part_images', 'id, part_id, source_name, position'),
+          fetchAllRows('folders', 'id, name'),
           fetchUsage(), // Hata vermez; alınamayan değer önizlemede "Alınamadı" olur
         ]);
         if (token !== scanToken) return; // Daha yeni bir tarama başladı
-        plan = buildPlan({ rootFiles, subCount, parts, images, overwrite: els.overwrite.checked, usage });
+        plan = buildPlan({ rootFiles, subFiles, subCount, parts, images, folders, rootName, overwrite: els.overwrite.checked, usage });
         renderSummary(plan);
       } catch (err) {
         if (token === scanToken) els.summary.replaceChildren(...addRow('Hata', errorMessage(err)));
@@ -684,6 +729,7 @@
           part_number: t.partNumber,
           material_type: result.materialType,
           material_desc: descriptions.get(t.key) ?? null,
+          folder_id: t.folderId ?? null,
         }));
         const { data, error } = await sb.from('parts').insert(rows).select('id, part_number');
         if (error) {
@@ -712,6 +758,23 @@
           .eq('id', t.existingId)
           .or('material_desc.is.null,material_desc.eq.');
         if (error) recordKeyFailure(result, t.key, `Açıklama yazılamadı: ${errorMessage(error)}`);
+      }
+
+      // 1c) Klasörü boş olan mevcut parçaları dosyanın bulunduğu klasöre ata
+      for (const t of targets.filter((t) => t.existingId && t.folderId && t.needsFolder)) {
+        const { error } = await sb.from('parts').update({ folder_id: t.folderId }).eq('id', t.existingId).is('folder_id', null);
+        if (error) recordKeyFailure(result, t.key, `Klasör atanamadı: ${errorMessage(error)}`);
+      }
+
+      // 1d) Aynı parça birden çok klasörde ise diğer klasörlere sanal kısayol ekle (parça kopyalanmaz)
+      const links = targets
+        .filter((t) => ids.has(t.key))
+        .flatMap((t) => t.shortcutIds.map((folderId) => ({ part_id: ids.get(t.key), folder_id: folderId })));
+      for (let i = 0; i < links.length; i += INSERT_CHUNK) {
+        const { error } = await sb
+          .from('part_folders')
+          .upsert(links.slice(i, i + INSERT_CHUNK), { onConflict: 'part_id,folder_id', ignoreDuplicates: true });
+        if (error) recordFailure('(klasör kısayolu)', '-', `Kısayol eklenemedi (supabase/part_folders.sql çalıştırıldı mı?): ${errorMessage(error)}`);
       }
 
       // 2) Üzerine yazma: mevcut parçaların eski görsellerini temizle

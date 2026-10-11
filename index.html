@@ -428,12 +428,20 @@
 
     /* Katalog görselinin ait olduğu kök klasörü gösteren sanal etiket; alt klasör
        etiketleriyle aynı görsel dilde, görselin sağ alt köşesine bindirilir */
-    .thumb .root-tag {
+    .thumb .root-tags {
       position: absolute;
       right: 4px;
       bottom: 4px;
       z-index: 1;
       max-width: calc(100% - 8px);
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 2px;
+      pointer-events: none;
+    }
+    .thumb .root-tag {
+      max-width: 100%;
       overflow: hidden;
       white-space: nowrap;
       text-overflow: ellipsis;
@@ -1364,6 +1372,8 @@
       pendingImages: [],     // Henüz kaydedilmemiş yeni görseller: { blob, url }
       detailId: null,
       partsById: new Map(),
+      shortcuts: new Map(),      // parça id -> kısayol klasör id'leri (part_folders)
+      shortcutPartIds: [],       // Şu anki klasöre kısayolla bağlı parça id'leri
       currentFolderId: null,  // null: kök dizin
       folderStack: [],        // Kökten şu anki klasöre kadar olan id zinciri
       // Öksüz parçaları toplayan "Karışık" klasörünün id'si: kökte aynı adda gerçek bir
@@ -1531,7 +1541,9 @@
           ? q.is('folder_id', null)
           : q.or(`folder_id.is.null,folder_id.eq.${state.currentFolderId}`);
       } else {
-        q = q.eq('folder_id', state.currentFolderId);
+        q = state.shortcutPartIds.length
+          ? q.or(`folder_id.eq.${state.currentFolderId},id.in.(${state.shortcutPartIds.join(',')})`)
+          : q.eq('folder_id', state.currentFolderId);
       }
 
       return q
@@ -1644,6 +1656,26 @@
       const { data, error } = await sb.from('folders').select('*').ilike('name', `%${term}%`);
       if (error) throw error;
       return data.sort((a, b) => trSort(a.name, b.name));
+    }
+
+    // part_folders tablosu yoksa (SQL henüz çalıştırılmadıysa) kısayollar sessizce yok sayılır
+    async function fetchShortcutPartIds(folderId) {
+      if (!folderId || folderId === ORPHAN_FOLDER_ID) return [];
+      const { data, error } = await sb.from('part_folders').select('part_id').eq('folder_id', folderId);
+      return error || !data ? [] : data.map((r) => r.part_id);
+    }
+
+    // Ekrandaki parçaların kısayol klasörlerini yükler (kart etiketleri için)
+    async function loadShortcuts(partIds) {
+      if (!partIds.length) return;
+      const { data, error } = await sb.from('part_folders').select('part_id, folder_id').in('part_id', partIds);
+      if (error || !data) return;
+      for (const id of partIds) state.shortcuts.delete(id);
+      for (const r of data) {
+        if (!state.shortcuts.has(r.part_id)) state.shortcuts.set(r.part_id, []);
+        state.shortcuts.get(r.part_id).push(r.folder_id);
+      }
+      await ensureFolderChainsCached(data.map((r) => r.folder_id));
     }
 
     async function fetchAllFolders() {
@@ -1817,6 +1849,7 @@
         toast(errorMessage(err));
         await renderFolderSection([]);
       }
+      state.shortcutPartIds = term ? [] : await fetchShortcutPartIds(state.currentFolderId);
       catalogPager.reset();
     }
 
@@ -2064,11 +2097,19 @@
 
       // Parçanın ait olduğu kök klasörün adı, alt klasör etiketleriyle aynı mantıkla
       // görselin sağ alt köşesine sanal bir etiket olarak eklenir (DB'de saklanmaz)
-      const rootName = rootFolderName(part.folder_id);
-      if (rootName) {
-        const tag = h('span', 'root-tag', rootName);
-        tag.style.background = labelColor(rootName);
-        thumb.append(tag);
+      // Birden çok klasöre kısayolu olan parçalarda (ör. A320 ve A330) her kök için ayrı etiket konur
+      const rootNames = [...new Set([
+        rootFolderName(part.folder_id),
+        ...(state.shortcuts.get(part.id) ?? []).map(rootFolderName),
+      ].filter(Boolean))];
+      if (rootNames.length) {
+        const tags = h('div', 'root-tags');
+        for (const rootName of rootNames) {
+          const tag = h('span', 'root-tag', rootName);
+          tag.style.background = labelColor(rootName);
+          tags.append(tag);
+        }
+        thumb.append(tags);
       }
 
       const meta = h('div', 'meta');
@@ -2878,6 +2919,7 @@
           }
           // Kart üzerinde kök klasör etiketini gösterebilmek için üst klasör zincirlerini önbelleğe al
           await ensureFolderChainsCached(rows.map((r) => r.folder_id));
+          await loadShortcuts(rows.map((r) => r.id));
           els.grid.append(...rows.map(createCard));
         },
       });
