@@ -978,13 +978,8 @@
           <button id="folderBackZone" class="folder-back-zone" type="button" aria-label="Üst klasör" hidden></button>
           <div class="toolbar">
             <button id="folderBackBtn" class="icon-btn" type="button" aria-label="Üst klasör" title="Üst klasör" data-icon="back" hidden></button>
-            <input id="folderSearch" class="search" type="search" placeholder="Klasör ara…" autocomplete="off" aria-label="Klasör ara">
+            <input id="search" class="search" type="search" placeholder="Klasör, parça no, ad veya not ara…" autocomplete="off" aria-label="Klasör veya parça ara">
             <button id="newFolderBtn" class="icon-btn" type="button" aria-label="Yeni klasör" title="Yeni klasör" data-icon="folderPlus"></button>
-          </div>
-
-          <div class="toolbar">
-            <input id="search" class="search" type="search" placeholder="Parça no, ad veya not ara…" autocomplete="off" aria-label="Parça ara">
-
             <button id="filterBtn" class="icon-btn" type="button" aria-label="Filtrele" title="Filtrele" data-icon="funnel"></button>
             <button id="gridBtn" class="icon-btn" type="button" aria-label="Görünüm" title="Görünüm" data-icon="grid"></button>
           </div>
@@ -1371,7 +1366,6 @@
       partsById: new Map(),
       currentFolderId: null,  // null: kök dizin
       folderStack: [],        // Kökten şu anki klasöre kadar olan id zinciri
-      folderSearch: '',
       // Öksüz parçaları toplayan "Karışık" klasörünün id'si: kökte aynı adda gerçek bir
       // klasör varsa onun id'si, yoksa sanal ORPHAN_FOLDER_ID; hiç öksüz yoksa null
       orphanFolderId: null,
@@ -1763,8 +1757,8 @@
       }
       state.folderStack = chain;
       state.currentFolderId = folder.id;
-      state.folderSearch = '';
-      els.folderSearch.value = '';
+      state.search = '';
+      els.search.value = '';
       // Cihazın/tarayıcının geri tuşu bu klasörden bir üst klasöre dönebilsin diye geçmişe eklenir
       try { history.pushState({ folderNav: true }, ''); } catch { /* yoksay */ }
       resetCatalog();
@@ -1812,32 +1806,16 @@
     async function resetCatalog() {
       syncFolderUI();
 
-      const folderTerm = state.folderSearch.trim();
-      if (folderTerm) {
-        try {
-          await renderFolderSection(await searchFolderNames(folderTerm));
-        } catch (err) {
-          toast(errorMessage(err));
-          await renderFolderSection([]);
-        }
-        els.grid.replaceChildren();
-        els.resultCount.textContent = state.foldersInView.length
-          ? `${state.foldersInView.length} klasör bulundu`
-          : 'Eşleşen klasör bulunamadı';
-        els.sortInfo.textContent = '';
-        return;
-      }
-
-      updateSortUI(); // Klasör aramasından çıkınca sıralama bilgisi geri gelsin
-      if (!searchTerm()) {
-        try {
-          await renderFolderSection(await fetchChildFolders(state.currentFolderId));
-        } catch (err) {
-          toast(errorMessage(err));
-          await renderFolderSection([]);
-        }
-      } else {
-        await renderFolderSection([]); // Parça araması küreseldir, klasör bölümü gösterilmez
+      updateSortUI();
+      // Arama metni varken eşleşen klasörler (küresel) önce, parçalar altında listelenir
+      const term = searchTerm();
+      try {
+        await renderFolderSection(term
+          ? await searchFolderNames(term)
+          : await fetchChildFolders(state.currentFolderId));
+      } catch (err) {
+        toast(errorMessage(err));
+        await renderFolderSection([]);
       }
       catalogPager.reset();
     }
@@ -2772,16 +2750,6 @@
         clearTimeout(searchTimer);
         searchTimer = setTimeout(() => {
           state.search = els.search.value.trim();
-          resetCatalog();
-        }, 200);
-      });
-
-      // Klasör arama: yazarken anında (200 ms gecikmeyle) sorgu çalışır
-      let folderSearchTimer = null;
-      els.folderSearch.addEventListener('input', () => {
-        clearTimeout(folderSearchTimer);
-        folderSearchTimer = setTimeout(() => {
-          state.folderSearch = els.folderSearch.value.trim();
           resetCatalog();
         }, 200);
       });
