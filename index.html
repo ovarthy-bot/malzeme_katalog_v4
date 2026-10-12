@@ -665,6 +665,22 @@
 
     .setting-card > span { font-weight: 600; font-size: 15px; }
 
+    .feedback-note {
+      width: 100%;
+      min-height: 140px;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface-2);
+      color: var(--text);
+      font: inherit;
+      font-size: 15px;
+      resize: vertical;
+      outline: none;
+    }
+
+    .feedback-note:focus { border-color: var(--primary); }
+
     .link-card {
       text-decoration: none;
       color: var(--text);
@@ -1200,6 +1216,14 @@
                 </div>
               </div>
               <button id="connRefresh" class="btn" type="button">Yeniden kontrol et</button>
+            </div>
+
+            <h3 class="section-title">Öneriler ve hatalar</h3>
+
+            <div class="setting-card">
+              <span>Not defteri</span>
+              <textarea id="feedbackNote" class="feedback-note" rows="6" placeholder="Önerilerinizi ve karşılaştığınız hataları buraya yazın. Yazdıkça otomatik kaydedilir." aria-label="Öneriler ve hatalar notu"></textarea>
+              <p id="feedbackStatus" class="hint" role="status"></p>
             </div>
 
             <h3 class="section-title">Araçlar</h3>
@@ -2818,7 +2842,54 @@
 
       if (name === 'catalog') syncFolderUI();
       if (name === 'notes') notesPager.reset();
-      if (name === 'settings') checkConnection();
+      if (name === 'settings') {
+        checkConnection();
+        loadFeedbackNote();
+      }
+    }
+
+    /* ==========================================================
+       Öneriler ve hatalar notu (yazdıkça veritabanına kaydedilir)
+       ========================================================== */
+
+    const FEEDBACK_KEY = 'feedback';
+    let feedbackTimer = null;
+    let feedbackDirty = false; // Henüz kaydedilmemiş yazı var mı
+
+    function setFeedbackStatus(text, bad = false) {
+      els.feedbackStatus.textContent = text;
+      els.feedbackStatus.style.color = bad ? 'var(--bad)' : '';
+    }
+
+    async function loadFeedbackNote() {
+      if (feedbackDirty) return; // Yazılmakta olan metnin üzerine yazma
+      const { data, error } = await sb.from('app_notes').select('content').eq('key', FEEDBACK_KEY).maybeSingle();
+      if (error) {
+        setFeedbackStatus('Not yüklenemedi (supabase/app_notes.sql çalıştırıldı mı?): ' + errorMessage(error), true);
+        return;
+      }
+      if (!feedbackDirty) els.feedbackNote.value = data?.content ?? '';
+      setFeedbackStatus('');
+    }
+
+    async function saveFeedbackNote() {
+      clearTimeout(feedbackTimer);
+      if (!feedbackDirty) return;
+      const content = els.feedbackNote.value;
+      setFeedbackStatus('Kaydediliyor…');
+      const { error } = await sb
+        .from('app_notes')
+        .upsert({ key: FEEDBACK_KEY, content, updated_at: new Date().toISOString() });
+      if (error) {
+        setFeedbackStatus('Kaydedilemedi: ' + errorMessage(error), true);
+        return;
+      }
+      if (els.feedbackNote.value === content) {
+        feedbackDirty = false;
+        setFeedbackStatus('Kaydedildi');
+      } else {
+        saveFeedbackNote(); // Kaydederken yazı devam etti
+      }
     }
 
     /* ==========================================================
@@ -2934,6 +3005,17 @@
 
     function bindEvents() {
       desktopMQ.addEventListener('change', applyGridLayout);
+
+      els.feedbackNote.addEventListener('input', () => {
+        feedbackDirty = true;
+        setFeedbackStatus('Yazılıyor…');
+        clearTimeout(feedbackTimer);
+        feedbackTimer = setTimeout(saveFeedbackNote, 500);
+      });
+      els.feedbackNote.addEventListener('blur', saveFeedbackNote);
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') saveFeedbackNote();
+      });
 
       let dupTimer = null;
       els.f_part_number.addEventListener('input', () => {
