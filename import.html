@@ -170,9 +170,14 @@
     <section class="card" id="previewCard" hidden>
       <h2>2. Ön izleme</h2>
       <dl id="summary" class="summary"></dl>
+      <p id="existingWarn" class="warn" hidden></p>
       <p id="overwriteWarn" class="warn" hidden></p>
       <p id="emptyHint" class="warn" hidden></p>
       <p id="capacityWarn" class="warn" hidden></p>
+      <details id="existingDetails" hidden>
+        <summary>Veritabanında zaten kayıtlı numaralar (mevcut parçaya eklenecek)</summary>
+        <ul id="existingList"></ul>
+      </details>
       <details>
         <summary>Yeni açılacak parçalar</summary>
         <ul id="newList"></ul>
@@ -610,6 +615,16 @@
       const storageFull = result.usage.storage != null && result.usage.storage + uploadBytes > STORAGE_LIMIT_BYTES;
       els.capacityWarn.hidden = !storageFull;
       els.capacityWarn.textContent = 'Bu yükleme depolama sınırını aşabilir; sığmayan görseller hata listesine düşer.';
+
+      // Kayıtlı numaralar: yeni parça açılmaz, görseller mevcut parçaya eklenir
+      const hasExisting = existingTargets.length > 0;
+      els.existingWarn.hidden = !hasExisting;
+      els.existingWarn.textContent = `${existingTargets.length} parça numarası veritabanında zaten kayıtlı: yeni parça açılmayacak, görseller mevcut parçaya eklenecek.`;
+      els.existingDetails.hidden = !hasExisting;
+      fillList(els.existingList, existingTargets.map((t) => t.partNumber));
+      for (const dt of els.summary.querySelectorAll('dt')) {
+        if (dt.textContent === 'Mevcut parçaya eklenecek' && hasExisting) dt.nextElementSibling.style.color = 'var(--bad)';
+      }
 
       els.overwriteWarn.hidden = !(result.overwrite && existingTargets.length);
       els.overwriteWarn.textContent = `${existingTargets.length} mevcut parçanın görselleri silinip yeniden yüklenecek.`;

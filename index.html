@@ -542,6 +542,20 @@
 
     .hint { margin: 0; font-size: 12px; color: var(--muted); }
 
+    .dup-hint { color: var(--bad); font-weight: 600; }
+    .dup-hint[hidden] { display: none; }
+    .dup-hint button {
+      margin-left: 6px;
+      padding: 0;
+      border: 0;
+      background: none;
+      color: var(--primary);
+      font: inherit;
+      font-weight: 700;
+      text-decoration: underline;
+      cursor: pointer;
+    }
+
     /* Form görsel ızgarası */
     .image-grid {
       display: grid;
@@ -1100,6 +1114,7 @@
               <div class="field">
                 <label for="f_part_number">Parça numarası *</label>
                 <input id="f_part_number" name="part_number" maxlength="80" autocomplete="off" required>
+                <p id="pnDupHint" class="hint dup-hint" hidden></p>
               </div>
 
               <div class="field">
@@ -2514,7 +2529,31 @@
       els.imageGrid.replaceChildren(...(tiles.length ? tiles : [h('p', 'empty', 'Henüz görsel yok.')]));
     }
 
+    // Yazılan parça numarası zaten kayıtlıysa (büyük/küçük harf fark etmez) formda uyarı gösterir
+    let dupCheckToken = 0;
+    async function checkDuplicatePartNumber() {
+      const token = ++dupCheckToken;
+      const value = els.f_part_number.value.trim();
+      els.pnDupHint.hidden = true;
+      if (!value) return;
+      const escaped = value.replace(/[\\%_]/g, '\\$&');
+      const { data, error } = await sb.from('parts').select('*').ilike('part_number', escaped).limit(1);
+      if (token !== dupCheckToken || error || !data?.length) return;
+      const found = data[0];
+      if (state.editing && found.id === state.editing.id) return;
+      const open = h('button', '', 'Mevcut parçayı aç');
+      open.type = 'button';
+      open.addEventListener('click', () => {
+        state.partsById.set(found.id, found);
+        openDetail(found.id);
+      });
+      els.pnDupHint.replaceChildren(`Bu parça numarası zaten kayıtlı (${found.part_number}).`, open);
+      els.pnDupHint.hidden = false;
+    }
+
     async function openForm(part = null) {
+      dupCheckToken++;
+      els.pnDupHint.hidden = true;
       if (state.view !== 'form') state.prevView = state.view;
       state.editing = part;
       state.formExisting = [];
@@ -2895,6 +2934,12 @@
 
     function bindEvents() {
       desktopMQ.addEventListener('change', applyGridLayout);
+
+      let dupTimer = null;
+      els.f_part_number.addEventListener('input', () => {
+        clearTimeout(dupTimer);
+        dupTimer = setTimeout(checkDuplicatePartNumber, 300);
+      });
 
       // Masaüstü kısayolu: "/" tuşu arama kutusuna odaklanır (yazı alanındayken veya pencere açıkken çalışmaz)
       document.addEventListener('keydown', (e) => {
