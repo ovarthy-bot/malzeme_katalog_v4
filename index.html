@@ -1372,6 +1372,7 @@
       pendingImages: [],     // Henüz kaydedilmemiş yeni görseller: { blob, url }
       detailId: null,
       partsById: new Map(),
+      rootTotal: null,           // Kök dizinde gösterilen toplam parça sayısı
       shortcuts: new Map(),      // parça id -> kısayol klasör id'leri (part_folders)
       shortcutPartIds: [],       // Şu anki klasöre kısayolla bağlı parça id'leri
       currentFolderId: null,  // null: kök dizin
@@ -1676,6 +1677,14 @@
         state.shortcuts.get(r.part_id).push(r.folder_id);
       }
       await ensureFolderChainsCached(data.map((r) => r.folder_id));
+    }
+
+    // Veritabanındaki toplam parça (parça numarası) sayısı; filtre seçiliyse ona göre sayılır
+    async function countAllParts() {
+      let q = sb.from('parts').select('id', { count: 'exact', head: true });
+      if (state.mtFilter.size) q = applyListFilter(q, 'material_type', state.mtFilter);
+      const { count, error } = await q;
+      return error ? null : count;
     }
 
     async function fetchAllFolders() {
@@ -2902,7 +2911,12 @@
         fetchPage: async (from, size) => {
           // Gerçek kök dizinde (klasör seçili değil, arama yok) parçalar artık doğrudan
           // gösterilmez; öksüz parçalar sanal "Karışık" klasörünün içinde listelenir
-          if (!state.currentFolderId && !searchTerm()) return { rows: [], count: 0 };
+          if (!state.currentFolderId && !searchTerm()) {
+            // Kök dizinde parça listelenmez; yalnızca toplam parça numarası sayısı istatistik olarak gösterilir
+            state.rootTotal = await countAllParts();
+            return { rows: [], count: 0 };
+          }
+          state.rootTotal = null;
           const { data, error, count } = await catalogQuery().range(from, from + size - 1);
           if (error) throw error;
           return { rows: data, count };
@@ -2912,6 +2926,10 @@
           setCount(null);
         },
         onPage: async (rows, count) => {
+          if (!state.currentFolderId && !searchTerm() && state.rootTotal != null) {
+            els.resultCount.textContent = `${state.rootTotal} parça numarası kayıtlı`;
+            return;
+          }
           setCount(count);
           if (!count && !state.foldersInView.length) {
             els.grid.replaceChildren(h('p', 'empty', 'Bu kriterlere uygun içerik bulunamadı.'));
