@@ -681,6 +681,52 @@
 
     .feedback-note:focus { border-color: var(--primary); }
 
+    .checklist { display: flex; flex-direction: column; gap: 6px; }
+
+    .check-row { display: flex; align-items: center; gap: 10px; }
+
+    .check-row input[type="checkbox"] {
+      width: 20px;
+      height: 20px;
+      flex-shrink: 0;
+      margin: 0;
+      accent-color: var(--primary);
+      cursor: pointer;
+    }
+
+    .check-row .check-text {
+      flex: 1;
+      min-width: 0;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface-2);
+      color: var(--text);
+      font: inherit;
+      font-size: 15px;
+      outline: none;
+    }
+
+    .check-row .check-text:focus { border-color: var(--primary); }
+
+    .check-row.done .check-text { text-decoration: line-through; color: var(--muted); }
+
+    .check-row .check-del {
+      width: 30px;
+      height: 30px;
+      flex-shrink: 0;
+      padding: 0;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 18px;
+      line-height: 1;
+      cursor: pointer;
+    }
+
+    .check-row .check-del:hover { color: var(--bad); }
+
     .link-card {
       text-decoration: none;
       color: var(--text);
@@ -1223,6 +1269,8 @@
             <div class="setting-card">
               <span>Not defteri</span>
               <textarea id="feedbackNote" class="feedback-note" rows="6" placeholder="Önerilerinizi ve karşılaştığınız hataları buraya yazın. Yazdıkça otomatik kaydedilir." aria-label="Öneriler ve hatalar notu"></textarea>
+              <div id="checklist" class="checklist"></div>
+              <button id="checklistAdd" class="btn" type="button">+ Madde ekle</button>
               <p id="feedbackStatus" class="hint" role="status"></p>
             </div>
 
@@ -2856,19 +2904,35 @@
     let feedbackTimer = null;
     let feedbackDirty = false; // Henüz kaydedilmemiş yazı var mı
 
+    // Onay kutulu madde listesi: [{ id, text, done }] olarak JSON halinde aynı tabloda saklanır
+    const CHECKLIST_KEY = 'feedback_checklist';
+    let checklist = [];
+    let checklistDirty = false;
+    let checklistTimer = null;
+
     function setFeedbackStatus(text, bad = false) {
       els.feedbackStatus.textContent = text;
       els.feedbackStatus.style.color = bad ? 'var(--bad)' : '';
     }
 
     async function loadFeedbackNote() {
-      if (feedbackDirty) return; // Yazılmakta olan metnin üzerine yazma
-      const { data, error } = await sb.from('app_notes').select('content').eq('key', FEEDBACK_KEY).maybeSingle();
+      if (feedbackDirty || checklistDirty) return; // Yazılmakta olan metnin üzerine yazma
+      const { data, error } = await sb.from('app_notes').select('key, content').in('key', [FEEDBACK_KEY, CHECKLIST_KEY]);
       if (error) {
         setFeedbackStatus('Not yüklenemedi (supabase/app_notes.sql çalıştırıldı mı?): ' + errorMessage(error), true);
         return;
       }
-      if (!feedbackDirty) els.feedbackNote.value = data?.content ?? '';
+      const byKey = new Map(data.map((r) => [r.key, r.content]));
+      if (!feedbackDirty) els.feedbackNote.value = byKey.get(FEEDBACK_KEY) ?? '';
+      if (!checklistDirty) {
+        try {
+          const list = JSON.parse(byKey.get(CHECKLIST_KEY) || '[]');
+          checklist = Array.isArray(list) ? list : [];
+        } catch {
+          checklist = [];
+        }
+        renderChecklist();
+      }
       setFeedbackStatus('');
     }
 
@@ -2889,6 +2953,88 @@
         setFeedbackStatus('Kaydedildi');
       } else {
         saveFeedbackNote(); // Kaydederken yazı devam etti
+      }
+    }
+
+    function renderChecklist(focusId = null) {
+      els.checklist.replaceChildren(...checklist.map((item) => {
+        const row = h('div', `check-row${item.done ? ' done' : ''}`);
+
+        const box = h('input');
+        box.type = 'checkbox';
+        box.checked = item.done;
+        box.setAttribute('aria-label', 'Tamamlandı');
+        box.addEventListener('change', () => {
+          item.done = box.checked;
+          row.classList.toggle('done', item.done);
+          queueChecklistSave(true);
+        });
+
+        const text = h('input', 'check-text');
+        text.type = 'text';
+        text.value = item.text;
+        text.placeholder = 'Madde…';
+        text.maxLength = 300;
+        text.setAttribute('aria-label', 'Madde metni');
+        text.dataset.id = item.id;
+        text.addEventListener('input', () => {
+          item.text = text.value;
+          queueChecklistSave(false);
+        });
+        text.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            addChecklistItem();
+          }
+        });
+
+        const del = h('button', 'check-del', '×');
+        del.type = 'button';
+        del.setAttribute('aria-label', 'Maddeyi sil');
+        del.addEventListener('click', () => {
+          checklist = checklist.filter((i) => i.id !== item.id);
+          renderChecklist();
+          queueChecklistSave(true);
+        });
+
+        row.append(box, text, del);
+        return row;
+      }));
+      if (focusId) els.checklist.querySelector(`[data-id="${focusId}"]`)?.focus();
+    }
+
+    function addChecklistItem() {
+      const id = (crypto.randomUUID?.() ?? String(Date.now() + Math.random()));
+      checklist.push({ id, text: '', done: false });
+      renderChecklist(id);
+    }
+
+    // Onay kutusu ve silme anında, madde metni yazılırken kısa gecikmeyle kaydedilir
+    function queueChecklistSave(immediate) {
+      checklistDirty = true;
+      setFeedbackStatus('Yazılıyor…');
+      clearTimeout(checklistTimer);
+      checklistTimer = setTimeout(saveChecklist, immediate ? 0 : 500);
+    }
+
+    async function saveChecklist() {
+      clearTimeout(checklistTimer);
+      if (!checklistDirty) return;
+      const content = JSON.stringify(checklist.filter((i) => i.text.trim() || i.done));
+      const snapshot = JSON.stringify(checklist);
+      setFeedbackStatus('Kaydediliyor…');
+      const { error } = await sb
+        .from('app_notes')
+        .upsert({ key: CHECKLIST_KEY, content, updated_at: new Date().toISOString() });
+      if (error) {
+        setFeedbackStatus('Kaydedilemedi: ' + errorMessage(error), true);
+        return;
+      }
+      if (JSON.stringify(checklist) === snapshot) {
+        checklistDirty = false;
+        setFeedbackStatus('Kaydedildi');
+      } else {
+        saveChecklist(); // Kaydederken değişiklik sürdü
       }
     }
 
@@ -3013,8 +3159,13 @@
         feedbackTimer = setTimeout(saveFeedbackNote, 500);
       });
       els.feedbackNote.addEventListener('blur', saveFeedbackNote);
+      els.checklistAdd.addEventListener('click', addChecklistItem);
+      els.checklist.addEventListener('focusout', saveChecklist);
       document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'hidden') saveFeedbackNote();
+        if (document.visibilityState === 'hidden') {
+          saveFeedbackNote();
+          saveChecklist();
+        }
       });
 
       let dupTimer = null;
