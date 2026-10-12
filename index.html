@@ -1450,6 +1450,7 @@
       pendingImages: [],     // Henüz kaydedilmemiş yeni görseller: { blob, url }
       detailId: null,
       partsById: new Map(),
+      rootImageTotal: null,      // Kök dizinde gösterilen toplam görsel sayısı
       rootTotal: null,           // Kök dizinde gösterilen toplam parça sayısı
       shortcuts: new Map(),      // parça id -> kısayol klasör id'leri (part_folders)
       shortcutPartIds: [],       // Şu anki klasöre kısayolla bağlı parça id'leri
@@ -1762,6 +1763,13 @@
       let q = sb.from('parts').select('id', { count: 'exact', head: true });
       if (state.mtFilter.size) q = applyListFilter(q, 'material_type', state.mtFilter);
       const { count, error } = await q;
+      return error ? null : count;
+    }
+
+    // Veritabanındaki toplam görsel sayısı; malzeme tipi filtresi varken parça sayısıyla tutarlı olmadığı için sayılmaz
+    async function countAllImages() {
+      if (state.mtFilter.size) return null;
+      const { count, error } = await sb.from('part_images').select('id', { count: 'exact', head: true });
       return error ? null : count;
     }
 
@@ -3017,7 +3025,7 @@
           // gösterilmez; öksüz parçalar sanal "Karışık" klasörünün içinde listelenir
           if (!state.currentFolderId && !searchTerm()) {
             // Kök dizinde parça listelenmez; yalnızca toplam parça numarası sayısı istatistik olarak gösterilir
-            state.rootTotal = await countAllParts();
+            [state.rootTotal, state.rootImageTotal] = await Promise.all([countAllParts(), countAllImages()]);
             return { rows: [], count: 0 };
           }
           state.rootTotal = null;
@@ -3031,7 +3039,8 @@
         },
         onPage: async (rows, count) => {
           if (!state.currentFolderId && !searchTerm() && state.rootTotal != null) {
-            els.resultCount.textContent = `${state.rootTotal} parça numarası kayıtlı`;
+            els.resultCount.textContent = `${state.rootTotal} parça numarası kayıtlı`
+              + (state.rootImageTotal != null ? ` • ${state.rootImageTotal} resim` : '');
             return;
           }
           setCount(count);
