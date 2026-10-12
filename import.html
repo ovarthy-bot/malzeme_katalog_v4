@@ -475,6 +475,7 @@
         const k = keyOf(f.name);
         if (!folderByName.has(k)) folderByName.set(k, f.id);
       }
+      const ortakId = folderByName.get(keyOf('ORTAK')) ?? null;
       const rootFolderId = folderByName.get(keyOf(rootName)) ?? null;
 
       const result = {
@@ -525,6 +526,8 @@
             existingId,
             folderIds: new Set(), // dosyaların bulunduğu (eşleşen) klasörler
             existingFolderId: c.existing?.folder_id ?? null,
+            // Mevcut parçada kayıtlı tip, yeni parçada yükleme için seçilen tip
+            isChemical: (c.existing ? c.existing.material_type : els.mtSelect.value) === 'Kimyasal',
             // Üzerine yazılıyorsa sıra 0'dan, aksi halde mevcut görsellerin arkasından başlar
             nextPosition: existingId && !overwrite ? (maxPosition.get(existingId) ?? -1) + 1 : 0,
             needsFolder: !c.existing || c.existing.folder_id == null,
@@ -543,8 +546,10 @@
       result.shortcutCount = 0;
       for (const t of result.targets.values()) {
         // Asıl klasör: parçanın mevcut klasörü, yoksa ilk eşleşen klasör; diğerleri kısayol olur
-        t.folderId = t.existingFolderId ?? [...t.folderIds][0] ?? null;
-        t.shortcutIds = [...t.folderIds].filter((id) => id !== t.folderId);
+        // ORTAK'taki kimyasal tek yerde kalır: asıl klasörü ORTAK olur, A320/A330'a kısayol eklenmez
+        const inOrtak = t.isChemical && ortakId != null && (t.existingFolderId === ortakId || (t.existingFolderId == null && t.folderIds.has(ortakId)));
+        t.folderId = inOrtak ? ortakId : (t.existingFolderId ?? [...t.folderIds][0] ?? null);
+        t.shortcutIds = inOrtak ? [] : [...t.folderIds].filter((id) => id !== t.folderId);
         result.shortcutCount += t.shortcutIds.length;
         if (t.folderId == null || !t.needsFolder) continue;
         const entry = result.folderPlacement.get(t.folderId) ?? { name: folders.find((f) => f.id === t.folderId)?.name, count: 0 };
@@ -655,7 +660,7 @@
 
       try {
         const [parts, images, folders, usage] = await Promise.all([
-          fetchAllRows('parts', 'id, part_number, folder_id'),
+          fetchAllRows('parts', 'id, part_number, folder_id, material_type'),
           fetchAllRows('part_images', 'id, part_id, source_name, position'),
           fetchAllRows('folders', 'id, name'),
           fetchUsage(), // Hata vermez; alınamayan değer önizlemede "Alınamadı" olur
@@ -845,6 +850,7 @@
 
     els.folderInput.addEventListener('change', scanFolder);
     els.overwrite.addEventListener('change', scanFolder);
+els.mtSelect.addEventListener('change', scanFolder); // Kimyasal + ORTAK kuralı seçilen malzeme tipine bağlı
 
     els.startBtn.addEventListener('click', async () => {
       if (!plan || !plan.items.length) return;

@@ -58,7 +58,7 @@
       stroke-linejoin: round;
     }
 
-    /* ---------- Cihaz çerçevesi ---------- */
+    /* ---------- Sayfa iskeleti (mobil: tek sütun; masaüstü düzeni dosyanın sonunda) ---------- */
 
     .device { height: 100vh; height: 100dvh; width: 100%; }
 
@@ -72,53 +72,6 @@
     }
 
     .notch, .status-bar { display: none; }
-
-    @media (min-width: 768px) {
-      body {
-        background: linear-gradient(135deg, #e8edf6, #c9d4e6);
-        background: var(--page);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-      }
-
-      .device {
-        width: 390px;
-        height: 844px;
-        padding: 12px;
-        border-radius: 56px;
-        background: #1c1e24;
-        box-shadow: 0 30px 60px rgba(0, 0, 0, .3), inset 0 0 0 2px #3a3d46;
-      }
-
-      .screen { border-radius: 44px; }
-
-      .status-bar {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        height: 44px;
-        padding: 0 28px;
-        background: var(--header);
-        color: #fff;
-        font-size: 15px;
-        font-weight: 600;
-        flex-shrink: 0;
-      }
-
-      .notch {
-        display: block;
-        position: absolute;
-        top: 8px;
-        left: 50%;
-        translate: -50% 0;
-        width: 120px;
-        height: 32px;
-        background: #000;
-        border-radius: 20px;
-        z-index: 50;
-      }
-    }
 
     /* ---------- Üst çubuk ---------- */
 
@@ -966,6 +919,131 @@
     }
 
     .toast.show { opacity: 1; }
+
+    /* ==========================================================
+       Masaüstü düzeni (≥ 900 px): yan menü, akışkan grid, ortalanmış paneller
+       ========================================================== */
+
+    @media (min-width: 900px) {
+      .screen {
+        display: grid;
+        grid-template-columns: 220px minmax(0, 1fr);
+        grid-template-rows: auto minmax(0, 1fr);
+        grid-template-areas: "top top" "nav main";
+      }
+
+      .topbar { grid-area: top; height: 60px; padding: 0 20px; }
+      .topbar h1 { text-align: left; font-size: 20px; }
+      #menuBtn, .topbar-spacer { display: none; }
+
+      .views { grid-area: main; }
+
+      /* Alt menü masaüstünde sol kenarda dikey yan menü olur */
+      .bottom-nav {
+        grid-area: nav;
+        display: flex;
+        flex-direction: column;
+        align-content: flex-start;
+        gap: 4px;
+        padding: 16px 10px;
+        border-top: 0;
+        border-right: 1px solid var(--border);
+      }
+
+      .nav-btn {
+        display: flex;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 12px;
+        height: 44px;
+        padding: 0 14px;
+        border-radius: 10px;
+        font: inherit;
+        font-size: 15px;
+        font-weight: 600;
+      }
+
+      .nav-btn::after { content: attr(aria-label); }
+      .nav-btn:hover { background: var(--surface-2); }
+      .nav-btn.active { background: var(--chip); }
+      .nav-btn svg { width: 22px; height: 22px; }
+
+      .folder-back-zone { display: none; }
+
+      .toolbar { padding: 16px 24px 8px; }
+      .search { max-width: 640px; }
+      .info { padding: 0 24px 10px; }
+      .grid-wrap { padding: 8px 24px 24px; }
+      .icon-btn:hover { border-color: var(--primary); }
+
+      /* Kartlar sütun sayısını pencere genişliğine göre kendisi belirler;
+         grid modu (1x1 / 2x3 / 3x4) burada kart genişliğini ayarlar */
+      .grid,
+      .folder-grid {
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 14px;
+      }
+
+      .grid { grid-auto-rows: auto; }
+      .grid[data-mode="3x4"], .folder-grid[data-mode="3x4"] { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+      .grid[data-mode="1x1"], .folder-grid[data-mode="1x1"] { grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
+
+      .grid .card { aspect-ratio: 4 / 5; }
+      .card { transition: transform .12s, box-shadow .12s; }
+      .card:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(0, 0, 0, .15); }
+      .card .title { font-size: 13px; }
+      .card .sub { font-size: 12px; }
+      .card .card-note { font-size: 11px; }
+
+      /* Form ve ayarlar ortalanmış, okunaklı bir genişlikte durur */
+      .form-wrap,
+      .settings {
+        padding-block: 24px;
+        padding-inline: max(24px, calc((100% - 720px) / 2));
+      }
+
+      .list-wrap { padding-inline: max(24px, calc((100% - 860px) / 2)); }
+      .credit-note { right: 24px; }
+
+      /* Alttan açılan paneller masaüstünde ortada açılan pencere olur */
+      dialog.sheet {
+        top: 50%;
+        bottom: auto;
+        translate: -50% -50%;
+        width: min(92vw, 560px);
+        max-height: 90vh;
+        border-radius: 16px;
+      }
+
+      dialog.sheet[open] { animation: sheet-fade .18s ease-out; }
+
+      @keyframes sheet-fade {
+        from { opacity: 0; transform: translateY(8px); }
+        to { opacity: 1; transform: none; }
+      }
+
+      .sheet-body { min-height: 0; padding-bottom: 20px; }
+
+      /* Parça detayı: solda büyük görsel, sağda bilgiler */
+      dialog#detailSheet { width: min(94vw, 980px); }
+
+      #detailSheet .sheet-body {
+        display: grid;
+        grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+        grid-template-rows: repeat(4, max-content) 1fr;
+        column-gap: 24px;
+        row-gap: 14px;
+        align-content: start;
+      }
+
+      #detailSheet .gallery { grid-column: 1; grid-row: 1 / -1; align-self: start; }
+      #detailSheet .detail-title,
+      #detailSheet .detail-pn-row,
+      #detailSheet dl.fields,
+      #detailSheet .sheet-actions { grid-column: 2; }
+
+      .toast { bottom: 28px; }
+    }
   </style>
 </head>
 <body>
@@ -2111,6 +2189,9 @@
         rootFolderName(part.folder_id),
         ...(state.shortcuts.get(part.id) ?? []).map(rootFolderName),
       ].filter(Boolean))];
+      // ORTAK etiketli kimyasal her iki uçak için geçerlidir; ayrıca A320/A330 etiketi gerekmez
+      const ortak = rootNames.find((n) => n.toLocaleUpperCase('tr') === 'ORTAK');
+      if (ortak && part.material_type === 'Kimyasal') rootNames.splice(0, rootNames.length, ortak);
       if (rootNames.length) {
         const tags = h('div', 'root-tags');
         for (const rootName of rootNames) {
@@ -2144,9 +2225,20 @@
       else els.resultCount.textContent = `${count} Sonuç Bulundu`;
     }
 
+    // Masaüstü düzeninde (CSS ile aynı eşik) sütun sayısını CSS belirler; satır yüksekliği kart oranından gelir
+    const desktopMQ = window.matchMedia('(min-width: 900px)');
+
     function applyGridLayout() {
       const { rows, cols } = GRID_MODES[state.gridMode];
       const wrap = els.gridWrap;
+      if (desktopMQ.matches) {
+        els.grid.style.gridTemplateColumns = '';
+        els.grid.style.gridAutoRows = '';
+        els.folderGrid.style.gridTemplateColumns = '';
+        els.grid.dataset.mode = state.gridMode;
+        els.folderGrid.dataset.mode = state.gridMode;
+        return;
+      }
       const style = getComputedStyle(wrap);
       const padding = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
       const gap = 10;
@@ -2794,6 +2886,18 @@
        ========================================================== */
 
     function bindEvents() {
+      desktopMQ.addEventListener('change', applyGridLayout);
+
+      // Masaüstü kısayolu: "/" tuşu arama kutusuna odaklanır (yazı alanındayken veya pencere açıkken çalışmaz)
+      document.addEventListener('keydown', (e) => {
+        if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return;
+        if (document.querySelector('dialog[open]')) return;
+        if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName)) return;
+        if (state.view !== 'catalog') return;
+        e.preventDefault();
+        els.search.focus();
+      });
+
       // Arama: yazarken anında (200 ms gecikmeyle) sorgu çalışır
       let searchTimer = null;
       els.search.addEventListener('input', () => {
