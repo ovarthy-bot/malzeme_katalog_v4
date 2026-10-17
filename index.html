@@ -431,6 +431,9 @@
       color: var(--muted);
     }
 
+    /* Aramada eşleşen ilişkili task'ın kartta gösterilen satırı */
+    .card .card-task { color: var(--primary); font-weight: 600; }
+
     .grid[data-mode="1x1"] .title,
     .folder-grid[data-mode="1x1"] .title { font-size: 18px; }
     .grid[data-mode="1x1"] .sub,
@@ -1222,7 +1225,7 @@
           <button id="folderBackZone" class="folder-back-zone" type="button" aria-label="Üst klasör" hidden></button>
           <div class="toolbar">
             <button id="folderBackBtn" class="icon-btn" type="button" aria-label="Üst klasör" title="Üst klasör" data-icon="back" hidden></button>
-            <input id="search" class="search" type="search" placeholder="Klasör, parça no, ad veya not ara…" autocomplete="off" aria-label="Klasör veya parça ara">
+            <input id="search" class="search" type="search" placeholder="Klasör, parça, ad, not, task ara…" autocomplete="off" aria-label="Klasör veya parça ara">
             <button id="newFolderBtn" class="icon-btn" type="button" aria-label="Yeni klasör" title="Yeni klasör" data-icon="folderPlus"></button>
             <button id="filterBtn" class="icon-btn" type="button" aria-label="Filtrele" title="Filtrele" data-icon="funnel"></button>
             <button id="gridBtn" class="icon-btn" type="button" aria-label="Görünüm" title="Görünüm" data-icon="grid"></button>
@@ -1662,6 +1665,7 @@
       rootTotal: null,           // Kök dizinde gösterilen toplam parça sayısı
       shortcuts: new Map(),      // parça id -> kısayol klasör id'leri (part_folders)
       shortcutPartIds: [],       // Şu anki klasöre kısayolla bağlı parça id'leri
+      taskMatches: new Map(),    // Aramada task'ı eşleşen parça id -> eşleşen ilk task metni
       currentFolderId: null,  // null: kök dizin
       folderStack: [],        // Kökten şu anki klasöre kadar olan id zinciri
       // Öksüz parçaları toplayan "Karışık" klasörünün id'si: kökte aynı adda gerçek bir
@@ -1818,10 +1822,11 @@
 
       const term = searchTerm();
       if (term) {
-        // Arama metni varken sonuçlar tüm klasörlerde (küresel) aranır
-        q = q.or(['part_number', 'material_desc', 'notes', 'teknisyen_agzi']
-          .map((col) => `${col}.ilike.*${term}*`)
-          .join(','));
+        // Arama metni varken sonuçlar tüm klasörlerde (küresel) aranır; metni task'ında geçen parçalar da dahildir
+        const filters = ['part_number', 'material_desc', 'notes', 'teknisyen_agzi']
+          .map((col) => `${col}.ilike.*${term}*`);
+        if (state.taskMatches.size) filters.push(`id.in.(${[...state.taskMatches.keys()].join(',')})`);
+        q = q.or(filters.join(','));
       } else if (state.currentFolderId && state.currentFolderId === state.orphanFolderId) {
         // "Karışık" klasörü (gerçek ya da sanal): öksüz parçaları, gerçek bir klasörse
         // ayrıca doğrudan ona atanmış parçaları da gösterir
@@ -2141,8 +2146,28 @@
       els.folderGrid.hidden = !folders.length;
     }
 
+    // Arama metni task'ında geçen parçalar: parça id -> eşleşen ilk task (kartta gösterilir).
+    // part_tasks tablosu yoksa ya da okunamazsa arama task'sız devam eder.
+    async function fetchTaskMatches(term) {
+      const matches = new Map();
+      const { data, error } = await sb
+        .from('part_tasks')
+        .select('part_id, task')
+        .ilike('task', `%${term}%`)
+        .order('id', { ascending: true })
+        .limit(1000); // Çok genel bir kelimede ilk 1000 task yeterlidir; sorgu adresi de taşmaz
+      if (error) return matches;
+      for (const row of data) {
+        if (!matches.has(row.part_id)) matches.set(row.part_id, row.task);
+      }
+      return matches;
+    }
+
+    let catalogResetToken = 0;
+
     // Klasör ve parça gridini şu anki klasöre (veya klasör/parça aramasına) göre yeniden çizer
     async function resetCatalog() {
+      const token = ++catalogResetToken;
       syncFolderUI();
 
       updateSortUI();
@@ -2156,7 +2181,11 @@
         toast(errorMessage(err));
         await renderFolderSection([]);
       }
-      state.shortcutPartIds = term ? [] : await fetchShortcutPartIds(state.currentFolderId);
+      const taskMatches = term ? await fetchTaskMatches(term) : new Map();
+      const shortcutPartIds = term ? [] : await fetchShortcutPartIds(state.currentFolderId);
+      if (token !== catalogResetToken) return; // Bu sırada yeni bir arama/gezinme başladı; o yeniden çizecek
+      state.taskMatches = taskMatches;
+      state.shortcutPartIds = shortcutPartIds;
       catalogPager.reset();
     }
 
@@ -2431,6 +2460,10 @@
 
       const noteText = [part.teknisyen_agzi, part.notes].filter(Boolean).join(' • ');
       if (noteText) meta.append(h('span', 'card-note', noteText));
+
+      // Arama bu parçayı task'ı sayesinde buldu: eşleşen task kartta gösterilir
+      const matchedTask = state.taskMatches.get(part.id);
+      if (matchedTask) meta.append(h('span', 'card-note card-task', `Task: ${matchedTask}`));
 
       card.append(thumb, meta);
       card.addEventListener('click', () => openDetail(part.id));
