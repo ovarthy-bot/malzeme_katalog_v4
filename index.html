@@ -1410,7 +1410,7 @@
       <button class="icon-btn" type="button" data-close aria-label="Kapat" data-icon="close"></button>
     </div>
     <div class="sheet-body">
-      <p class="hint">Excel dosyasında <strong>A sütunu</strong> parça numarası, <strong>B sütunu</strong> ilişkili task olmalıdır (yalnızca ilk sayfa okunur). Bir parçaya birden çok satırla birden çok task eklenebilir. Parçada zaten kayıtlı task'lar atlanır; mevcut task'lara dokunulmaz.</p>
+      <p class="hint">Excel dosyasında <strong>A sütunu</strong> parça numarası, <strong>B sütunu</strong> ilişkili task olmalıdır (yalnızca ilk sayfa okunur). Bir parçaya birden çok satırla birden çok task eklenebilir. Task'ı boş ya da hatalı (#N/A) olan satırlar, dosyada tekrar eden ve parçada zaten kayıtlı task'lar atlanır; mevcut task'lara dokunulmaz.</p>
       <div class="field">
         <label for="taskImportFile">Excel dosyası (.xlsx, .xls)</label>
         <input id="taskImportFile" type="file" accept=".xlsx,.xls">
@@ -2999,13 +2999,26 @@
     // Satırları parçalarla eşleştirir; hiçbir şey yazmaz. Sonuç özet olarak gösterilir.
     function analyzeTaskImport() {
       const { rows, partIds, existing } = taskImport;
-      const plan = { read: 0, toInsert: [], duplicate: 0, incomplete: 0, missingRows: 0, missingParts: new Map() };
-      const seen = new Set(existing);
+      const plan = {
+        read: 0,
+        toInsert: [],
+        noPartNumber: 0,   // Parça no boş
+        noTask: 0,         // Task boş ya da hata değerli (#N/A gibi)
+        missingRows: 0,    // Parça no veritabanında yok
+        inDatabase: 0,     // Aynı task bu parçada zaten kayıtlı
+        inFile: 0,         // Aynı parça no + task dosyada birden çok satırda
+        missingParts: new Map(),
+      };
+      const inFile = new Set();
 
       for (const [partNumber, task] of rows.slice(els.taskImportHeader.checked ? 1 : 0)) {
         plan.read++;
-        if (!partNumber || !task) {
-          plan.incomplete++;
+        if (!partNumber) {
+          plan.noPartNumber++;
+          continue;
+        }
+        if (!task) {
+          plan.noTask++;
           continue;
         }
         const partId = partIds.get(importKey(partNumber));
@@ -3015,11 +3028,15 @@
           continue;
         }
         const key = taskKey(partId, task);
-        if (seen.has(key)) {
-          plan.duplicate++;
+        if (existing.has(key)) {
+          plan.inDatabase++;
           continue;
         }
-        seen.add(key);
+        if (inFile.has(key)) {
+          plan.inFile++;
+          continue;
+        }
+        inFile.add(key);
         plan.toInsert.push({ part_id: partId, task });
       }
 
@@ -3033,12 +3050,18 @@
         row.append(h('span', null, label), h('strong', null, String(value)));
         return row;
       };
+      // Atlanan satır türleri yalnızca varsa gösterilir
+      const skipped = [
+        ['Task\'ı boş ya da hatalı (#N/A) satır', plan.noTask, ''],
+        ['Parça numarası boş satır', plan.noPartNumber, ''],
+        ['Parçası veritabanında bulunamayan satır', plan.missingRows, 'bad'],
+        ['Dosyada tekrar eden satır (aynı parça + task)', plan.inFile, ''],
+        ['Veritabanında zaten kayıtlı satır', plan.inDatabase, ''],
+      ].filter(([, count]) => count);
       els.taskImportStats.replaceChildren(
         stat('Okunan satır', plan.read),
         stat('Eklenecek task', plan.toInsert.length, plan.toInsert.length ? 'ok' : ''),
-        stat('Zaten kayıtlı / tekrar (atlanır)', plan.duplicate),
-        stat('Parçası bulunamayan satır', plan.missingRows, plan.missingRows ? 'bad' : ''),
-        stat('Eksik satır (parça no ya da task boş)', plan.incomplete, plan.incomplete ? 'bad' : '')
+        ...skipped.map(([label, count, tone]) => stat(label, count, tone))
       );
       els.taskImportStats.hidden = false;
 
