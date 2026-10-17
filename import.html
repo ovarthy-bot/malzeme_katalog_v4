@@ -553,8 +553,12 @@
         // Asıl klasör: parçanın mevcut klasörü, yoksa ilk eşleşen klasör; diğerleri kısayol olur
         // ORTAK'taki kimyasal tek yerde kalır: asıl klasörü ORTAK olur, A320/A330'a kısayol eklenmez
         const inOrtak = t.isChemical && ortakId != null && (t.existingFolderId === ortakId || (t.existingFolderId == null && t.folderIds.has(ortakId)));
-        t.folderId = inOrtak ? ortakId : (t.existingFolderId ?? [...t.folderIds][0] ?? null);
-        t.shortcutIds = inOrtak ? [] : [...t.folderIds].filter((id) => id !== t.folderId);
+        // "Karışık" klasörleri yedek kalır: parça başka klasörde de varsa asıl klasör oradan seçilir
+        // ve Karışık'a kısayol eklenmez (sonradan Karışık'ta çift görünmesin)
+        const isMixed = (id) => /karışık/i.test(folders.find((f) => f.id === id)?.name ?? '');
+        const ids = [...t.folderIds].sort((a, b) => isMixed(a) - isMixed(b));
+        t.folderId = inOrtak ? ortakId : (t.existingFolderId ?? ids[0] ?? null);
+        t.shortcutIds = inOrtak ? [] : ids.filter((id) => id !== t.folderId && !(isMixed(id) && t.folderId != null && !isMixed(t.folderId)));
         result.shortcutCount += t.shortcutIds.length;
         if (t.folderId == null || !t.needsFolder) continue;
         const entry = result.folderPlacement.get(t.folderId) ?? { name: folders.find((f) => f.id === t.folderId)?.name, count: 0 };

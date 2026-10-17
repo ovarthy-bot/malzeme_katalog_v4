@@ -1,0 +1,152 @@
+(()=>{
+const old=document.getElementById('fotoPanel');if(old)old.remove();
+// Onceki calistirmadan kalan dongu varsa durdur
+if(window.__fotoS)window.__fotoS.stop=true;
+const S={paused:false,stop:false};window.__fotoS=S;
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const d=document.createElement('div');d.id='fotoPanel';
+d.style.cssText='position:fixed;top:10px;left:10px;z-index:99999;background:#fff;padding:10px;border:2px solid #333;width:420px';
+d.innerHTML='<div>Excel sutunlarini yapistir (goods_rcvd_batch, pn, desc, type):</div><textarea rows="6" style="width:396px"></textarea><br><button id="fStart">Basla</button> <button id="fPause" disabled>Duraklat</button> <button id="fStop" disabled>Durdur</button><div id="fStat" style="margin-top:6px;font:12px monospace"></div>';
+document.body.appendChild(d);
+const $=id=>d.querySelector('#'+id);
+const ta=d.querySelector('textarea');
+const status=m=>{$('fStat').textContent=m;console.log('[FOTO]',m);};
+
+// type -> hedef klasor
+const folderOf=t=>{const s=(t||'').replace(/\s+/g,'').toUpperCase();if(s.includes('320'))return 'A320 Karışık';if(s.includes('330'))return 'A330 Karışık';return '';};
+
+const run=async(RAW,root)=>{
+  // [sorgu no, parca no, tanim, tip, hedef klasor]
+  const PAIRS=RAW.split(/\r?\n/).map(l=>l.split('\t').map(s=>s.trim()))
+    .filter(p=>p.length>=2&&p[0]&&p[1]&&p[0]!=='goods_rcvd_batch')
+    .map(p=>[p[0],p[1],p[2]||'',p[3]||'',folderOf(p[3])])
+    .filter((p,i,a)=>a.findIndex(x=>x[0]===p[0])===i);
+  const log=(...a)=>status(a.join(' '));
+  const visible=e=>e&&e.offsetParent!==null;
+  const box=()=>[...document.querySelectorAll('input[type="text"]')].find(visible);
+  const btn=()=>[...document.querySelectorAll('button')].find(b=>visible(b)&&/search/i.test(b.textContent.trim()));
+  const getRows=()=>[...document.querySelectorAll('.ag-row')].filter(visible);
+  const cellText=(r,i)=>{const c=r.querySelectorAll('.ag-cell')[i];return c?c.textContent.trim():'';};
+  const setVal=(el,v)=>{const st=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;st.call(el,v);el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));};
+  const noRowsOverlay=()=>{const o=document.querySelector('.ag-overlay-no-rows-center, .ag-overlay-no-rows-wrapper');return o&&o.offsetParent!==null;};
+  // Ag istegi takibi: arama istegi bitmeden "sonuc yok" denmez, sunucu yavas olsa da beklenir
+  let started=0,pend=0;
+  const origFetch=window.fetch;
+  window.fetch=function(...a){started++;pend++;return origFetch.apply(this,a).finally(()=>{pend--;});};
+  const XP=XMLHttpRequest.prototype,origSend=XP.send;
+  XP.send=function(...a){started++;pend++;this.addEventListener('loadend',()=>{pend--;},{once:true});return origSend.apply(this,a);};
+  const loadingOverlay=()=>{const o=document.querySelector('.ag-overlay-loading-center, .ag-overlay-loading-wrapper');return o&&o.offsetParent!==null;};
+  const HARD_MAX=45000,NO_REQ_WAIT=6000,RENDER_WAIT=800;
+  const matchRows=q=>getRows().filter(r=>cellText(r,0)===q);
+  const waitRows=async(q,s0)=>{
+    const t0=Date.now();let idleSince=0;
+    while(Date.now()-t0<HARD_MAX){
+      if(S.stop)break;
+      status('Bekleniyor '+q+' ('+Math.round((Date.now()-t0)/1000)+'sn, bekleyen istek:'+pend+', baslayan:'+(started-s0)+')');
+      if(matchRows(q).length){await sleep(500);return matchRows(q);}
+      const netDone=started>s0&&pend===0&&!loadingOverlay();
+      if(netDone){
+        if(noRowsOverlay())break;
+        if(!idleSince)idleSince=Date.now();else if(Date.now()-idleSince>=RENDER_WAIT)break;
+      }else idleSince=0;
+      if(started===s0&&Date.now()-t0>=NO_REQ_WAIT)break;
+      await sleep(200);
+    }
+    return matchRows(q);
+  };
+  const cp=async()=>{while(S.paused&&!S.stop)await sleep(300);return !S.stop;};
+  let captured=[];
+  const origOpen=window.open;
+  window.open=(u)=>{captured.push(u);return null;};
+  const clean=s=>s.replace(/[\\/:*?"<>|]/g,'_');
+
+  const dirCache={};
+  const getDir=async folder=>{
+    if(!root)return null;
+    if(!folder)return root;
+    if(!dirCache[folder])dirCache[folder]=await root.getDirectoryHandle(folder,{create:true});
+    return dirCache[folder];
+  };
+  const exists=async(dir,fname)=>{try{await dir.getFileHandle(fname);return true;}catch(e){return false;}};
+  const count={};
+  // Klasor secildiyse dogrudan klasore yazar (var olan dosyanin uzerine yazmaz), degilse normal indirme
+  const save=async(url,base,folder)=>{
+    const res=await fetch(url,{credentials:'include'});
+    if(!res.ok)throw new Error('HTTP '+res.status);
+    const type=res.headers.get('content-type')||'';
+    if(!type.startsWith('image/'))throw new Error('Resim degil: '+type);
+    const blob=await res.blob();
+    const ext=type.includes('png')?'png':type.includes('webp')?'webp':'jpg';
+    const dir=await getDir(folder);
+    const key=folder+'/'+base;
+    let n=count[key]||0;
+    let name,fname;
+    for(;;){
+      name=n===0?base:base+' ('+n+')';fname=name+'.'+ext;n++;
+      if(!dir||!(await exists(dir,fname)))break;
+    }
+    count[key]=n;
+    if(dir){
+      const fh=await dir.getFileHandle(fname,{create:true});
+      const w=await fh.createWritable();await w.write(blob);await w.close();
+    }else{
+      const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=fname;
+      document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),10000);
+    }
+    return (folder?folder+'/':'')+fname;
+  };
+
+  log(PAIRS.length+' kayit islenecek'+(root?' (klasore yazilacak)':' (normal indirme)'));
+  let processed=0;
+  for(const [q,part,,,folder] of PAIRS){
+    if(!(await cp()))break;
+    try{
+      const s0=started;
+      log('ARANIYOR',q,'('+(processed+1)+'/'+PAIRS.length+')');
+      if(!box())throw new Error('Sorgu kutusu bulunamadi');
+      if(!btn())throw new Error('Search butonu bulunamadi');
+      setVal(box(),q);btn().click();
+      const matched=await waitRows(q,s0);
+      if(!matched.length){log('SONUC YOK',q,part);}
+      else{
+        const btns=matched.map(r=>r.querySelector('button,a')).filter(Boolean);
+        log(q,part,folder||'(tip yok)','resim sayisi:',btns.length);
+        if(!btns.length){log('RESIMSIZ',q,part);}
+        else{
+          let okCount=0;
+          for(let i=0;i<btns.length;i++){
+            if(!(await cp()))break;
+            captured=[];btns[i].click();await sleep(1500);
+            const url=captured[0];
+            if(!url){log('URL YAKALANAMADI',q,'buton',i+1);continue;}
+            const saved=await save(url,clean(part),folder);
+            log('OK',saved);okCount++;await sleep(800);
+          }
+          if(!okCount)log('HATA (indirilemedi)',q,part);
+          else if(!folder)log('TIP TANINMADI, ana klasore kaydedildi',q,part);
+        }
+      }
+    }catch(e){log('HATA',q,e.message);}
+    processed++;
+  }
+  window.open=origOpen;window.fetch=origFetch;XP.send=origSend;
+  log(S.stop?'DURDURULDU':'BITTI');
+};
+
+$('fStart').onclick=async()=>{
+  // Klasor secimi kullanici tiklamasi aninda, ilk await olarak yapilmali
+  let root=null;
+  if(window.showDirectoryPicker){
+    try{root=await window.showDirectoryPicker({mode:'readwrite'});}
+    catch(e){status('Klasor secilmedi, normal indirme kullanilacak');}
+  }else status('Tarayici klasor secimini desteklemiyor, normal indirme kullanilacak');
+  S.paused=false;S.stop=false;
+  $('fPause').textContent='Duraklat';$('fStart').disabled=true;ta.disabled=true;
+  $('fPause').disabled=false;$('fStop').disabled=false;
+  run(ta.value,root).catch(e=>{status('KRITIK HATA: '+e.message);console.error(e);}).then(()=>{
+    $('fPause').disabled=true;$('fStop').disabled=true;$('fStart').disabled=false;ta.disabled=false;
+  });
+};
+$('fPause').onclick=()=>{S.paused=!S.paused;$('fPause').textContent=S.paused?'Devam':'Duraklat';status(S.paused?'Duraklatildi':'Devam ediliyor');};
+$('fStop').onclick=()=>{S.stop=true;S.paused=false;$('fPause').disabled=true;status('Durduruluyor, mevcut resim bitince duracak...');};
+})();

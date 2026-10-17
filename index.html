@@ -1759,16 +1759,20 @@
       }
     }
 
-    // Bir parçanın ait olduğu kök (en üstteki) klasörün adını döndürür; parça hiçbir klasöre
-    // atanmamışsa (öksüzse) öksüz parçaları topladığımız sanal "Karışık" klasörünün adı döner
-    function rootFolderName(folderId) {
-      if (!folderId) return ORPHAN_FOLDER_NAME;
+    // Bir parçanın klasör zincirini kökten başlayarak {root, path} olarak döndürür (ör. "A330>Galley");
+    // parça hiçbir klasöre atanmamışsa (öksüzse) sanal "Karışık" klasörünün adı döner
+    function folderPathInfo(folderId) {
+      if (!folderId) return { root: ORPHAN_FOLDER_NAME, path: ORPHAN_FOLDER_NAME };
       let current = state.foldersCache.get(folderId);
+      if (!current) return null;
+      const names = [current.name];
       let guard = 0;
-      while (current && current.parent_id && guard++ < 10) {
+      while (current.parent_id && guard++ < 10) {
         current = state.foldersCache.get(current.parent_id);
+        if (!current) break;
+        names.unshift(current.name);
       }
-      return current ? current.name : null;
+      return { root: names[0], path: names.join('>') };
     }
 
     // Bir metni (üst klasör adını) sabit, ayırt edici bir renge çevirir; aynı ad her zaman aynı rengi alır
@@ -2277,21 +2281,22 @@
       setImage(img, part.image_url);
       thumb.append(img);
 
-      // Parçanın ait olduğu kök klasörün adı, alt klasör etiketleriyle aynı mantıkla
-      // görselin sağ alt köşesine sanal bir etiket olarak eklenir (DB'de saklanmaz)
-      // Birden çok klasöre kısayolu olan parçalarda (ör. A320 ve A330) her kök için ayrı etiket konur
-      const rootNames = [...new Set([
-        rootFolderName(part.folder_id),
-        ...(state.shortcuts.get(part.id) ?? []).map(rootFolderName),
-      ].filter(Boolean))];
+      // Parçanın klasör ağacı (ör. "A330>Galley"), görselin sağ alt köşesine sanal bir etiket olarak eklenir
+      // (DB'de saklanmaz). Birden çok klasöre kısayolu olan parçalarda (ör. A320 ve A330) her biri için ayrı etiket konur
+      let infos = [
+        folderPathInfo(part.folder_id),
+        ...(state.shortcuts.get(part.id) ?? []).map(folderPathInfo),
+      ].filter(Boolean);
+      infos = infos.filter((x, i) => infos.findIndex((y) => y.path === x.path) === i);
       // ORTAK etiketli kimyasal her iki uçak için geçerlidir; ayrıca A320/A330 etiketi gerekmez
-      const ortak = rootNames.find((n) => n.toLocaleUpperCase('tr') === 'ORTAK');
-      if (ortak && part.material_type === 'Kimyasal') rootNames.splice(0, rootNames.length, ortak);
-      if (rootNames.length) {
+      const ortak = infos.find((x) => x.root.toLocaleUpperCase('tr') === 'ORTAK');
+      if (ortak && part.material_type === 'Kimyasal') infos = [ortak];
+      if (infos.length) {
         const tags = h('div', 'root-tags');
-        for (const rootName of rootNames) {
-          const tag = h('span', 'root-tag', rootName);
-          tag.style.background = labelColor(rootName);
+        for (const info of infos) {
+          const tag = h('span', 'root-tag', info.path);
+          tag.title = info.path;
+          tag.style.background = labelColor(info.root);
           tags.append(tag);
         }
         thumb.append(tags);
@@ -2814,6 +2819,15 @@
       await syncPrimaryImage(partId);
     }
 
+    // Parça "Karışık" dışında bir klasöre atandıysa, "Karışık" klasörlerindeki kısayollarını siler
+    // (yoksa parça taşındıktan sonra da Karışık'ta görünmeye devam eder)
+    async function dropOrphanShortcuts(partId, folderId) {
+      if (!folderId) return;
+      const { data: orphans, error } = await sb.from('folders').select('id, name').ilike('name', '%Karışık%');
+      if (error || !orphans?.length || orphans.some((f) => f.id === folderId)) return;
+      await sb.from('part_folders').delete().eq('part_id', partId).in('folder_id', orphans.map((f) => f.id));
+    }
+
     async function savePart(event) {
       event.preventDefault();
       const form = els.partForm;
@@ -2842,6 +2856,7 @@
           if (error) throw error;
           if (!data.length) throw new Error('Kayıt güncellenemedi.');
           partId = state.editing.id;
+          await dropOrphanShortcuts(partId, payload.folder_id);
         } else {
           const { data, error } = await sb.from('parts').insert([payload]).select('id').single();
           if (error) throw error;
