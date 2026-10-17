@@ -734,6 +734,48 @@
 
     .link-card small { font-size: 13px; color: var(--muted); }
 
+    button.link-card {
+      width: 100%;
+      border: 0;
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    /* ---------- İlişkili task'ları Excel'den yükleme ---------- */
+
+    .check-line { display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; }
+    .check-line input { width: 18px; height: 18px; margin: 0; accent-color: var(--primary); }
+
+    .import-stats {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 12px;
+      border-radius: 12px;
+      background: var(--surface-2);
+      font-size: 14px;
+    }
+
+    .import-stat { display: flex; justify-content: space-between; gap: 12px; }
+    .import-stat strong { font-variant-numeric: tabular-nums; }
+    .import-stat.ok strong { color: var(--ok); }
+    .import-stat.bad strong { color: var(--bad); }
+
+    .import-missing { font-size: 13px; }
+    .import-missing summary { cursor: pointer; color: var(--muted); }
+
+    .import-missing p {
+      margin: 6px 0 0;
+      max-height: 120px;
+      overflow-y: auto;
+      word-break: break-word;
+    }
+
+    .import-result { margin: 0; font-size: 14px; font-weight: 600; color: var(--ok); }
+    .import-result.bad { color: var(--bad); }
+    .import-stats[hidden], .import-missing[hidden], .import-result[hidden], #taskImportStatus:empty { display: none; }
+
     .segmented {
       display: grid;
       grid-auto-flow: column;
@@ -937,7 +979,47 @@
     }
 
     dl.fields dt { color: var(--muted); }
-    dl.fields dd { margin: 0; white-space: pre-wrap; word-break: break-word; }
+    dl.fields dd { margin: 0; min-width: 0; white-space: pre-wrap; word-break: break-word; }
+
+    /* İlişkili task listesi: her satırda düzenle ve sil tuşları */
+    .task-list { display: flex; flex-direction: column; gap: 6px; white-space: normal; }
+    .task-rows { display: flex; flex-direction: column; gap: 6px; }
+    .task-row { display: flex; align-items: center; gap: 6px; }
+    .task-text { flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-word; }
+
+    .task-input {
+      flex: 1;
+      min-width: 0;
+      padding: 6px 10px;
+      border: 1px solid var(--primary);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--text);
+      font: inherit;
+      outline: none;
+    }
+
+    .task-btn {
+      width: 30px;
+      height: 30px;
+      flex-shrink: 0;
+      display: grid;
+      place-items: center;
+      padding: 0;
+      border: 0;
+      border-radius: 8px;
+      background: var(--surface-2);
+      color: var(--muted);
+      cursor: pointer;
+    }
+
+    .task-btn svg { width: 16px; height: 16px; }
+    .task-btn:hover { color: var(--primary); }
+    .task-btn.danger:hover { color: var(--bad); }
+    .task-btn:disabled { opacity: .5; cursor: wait; }
+
+    .task-error { margin: 0; font-size: 13px; color: var(--bad); }
+    .task-error:empty { display: none; }
 
     .pills { display: flex; flex-wrap: wrap; gap: 8px; }
 
@@ -1281,6 +1363,11 @@
               <span>Toplu görsel yükleme</span>
               <small>Klasördeki görselleri parça numarasına göre yükleyin</small>
             </a>
+
+            <button id="taskImportBtn" class="setting-card link-card" type="button">
+              <span>İlişkili Task yükle</span>
+              <small>Excel'den (A: parça no, B: task) parçalara toplu task ekleyin</small>
+            </button>
           </div>
         </section>
       </main>
@@ -1312,6 +1399,33 @@
       <div class="sheet-actions">
         <button id="detailDelete" class="btn danger" type="button">Sil</button>
         <button id="detailEdit" class="btn primary" type="button">Düzenle</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- İlişkili task'ları Excel'den toplu yükleme -->
+  <dialog id="taskImportSheet" class="sheet" aria-labelledby="taskImportTitle">
+    <div class="sheet-head">
+      <h2 id="taskImportTitle">İlişkili Task Yükle</h2>
+      <button class="icon-btn" type="button" data-close aria-label="Kapat" data-icon="close"></button>
+    </div>
+    <div class="sheet-body">
+      <p class="hint">Excel dosyasında <strong>A sütunu</strong> parça numarası, <strong>B sütunu</strong> ilişkili task olmalıdır (yalnızca ilk sayfa okunur). Bir parçaya birden çok satırla birden çok task eklenebilir. Parçada zaten kayıtlı task'lar atlanır; mevcut task'lara dokunulmaz.</p>
+      <div class="field">
+        <label for="taskImportFile">Excel dosyası (.xlsx, .xls)</label>
+        <input id="taskImportFile" type="file" accept=".xlsx,.xls">
+      </div>
+      <label class="check-line"><input id="taskImportHeader" type="checkbox" disabled> İlk satır başlık (atla)</label>
+      <p id="taskImportStatus" class="hint" role="status"></p>
+      <div id="taskImportStats" class="import-stats" hidden></div>
+      <details id="taskImportMissing" class="import-missing" hidden>
+        <summary id="taskImportMissingTitle"></summary>
+        <p id="taskImportMissingList"></p>
+      </details>
+      <p id="taskImportResult" class="import-result" role="status" hidden></p>
+      <div class="sheet-actions">
+        <button class="btn" type="button" data-close>Kapat</button>
+        <button id="taskImportRun" class="btn primary" type="button" disabled>İçe aktar</button>
       </div>
     </div>
   </dialog>
@@ -1410,6 +1524,11 @@
     const LAST_CHOICE_KEYS = { material_type: 'lastMaterialType' };
     const NO_VALUE = '__none__'; // Filtrede "Belirtilmemiş" (alan boş) seçeneği
 
+    // İlişkili task'ları Excel'den okumak için SheetJS, yalnızca içe aktarma açılınca yüklenir
+    const SHEETJS_URL = 'https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js';
+    const SHEETJS_SRI = 'sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT';
+    const TASK_INSERT_BATCH = 500;
+
     // Hiçbir klasöre atanmamış ("öksüz") parçaları toplayan, veritabanında karşılığı olmayan sanal klasör
     const ORPHAN_FOLDER_ID = '__orphan__';
     const ORPHAN_FOLDER_NAME = 'Karışık';
@@ -1459,6 +1578,8 @@
       folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>',
       folderPlus: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><line x1="12" y1="11" x2="12" y2="16"/><line x1="9.5" y1="13.5" x2="14.5" y2="13.5"/>',
       pencil: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
+      trash: '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>',
+      check: '<polyline points="20 6 9 17 4 12"/>',
     };
 
     const PLACEHOLDER_SRC = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
@@ -1622,11 +1743,11 @@
        ========================================================== */
 
     // PostgREST varsayılan olarak en fazla 1000 satır döndürür; hepsini sayfalı çekiyoruz.
-    async function fetchAll(columns) {
+    async function fetchAll(columns, table = 'parts') {
       const rows = [];
       for (let from = 0; ; from += 1000) {
         const { data, error } = await sb
-          .from('parts')
+          .from(table)
           .select(columns)
           .order('id', { ascending: true })
           .range(from, from + 999);
@@ -2490,16 +2611,192 @@
       const fields = [
         ['Malzeme tipi', part.material_type],
         ['Teknisyen ağzı', part.teknisyen_agzi],
+        ['İlişkili Task', createDetailTaskBox()],
         ['Notlar', part.notes],
         ['Eklenme tarihi', formatDate(part.created_at)],
       ];
-      els.detailFields.replaceChildren(...fields.flatMap(([key, value]) => [
-        h('dt', null, key),
-        h('dd', null, value || '—'),
-      ]));
+      els.detailFields.replaceChildren(...fields.flatMap(([key, value]) => {
+        const dd = h('dd');
+        if (value instanceof Node) dd.append(value);
+        else dd.textContent = value || '—';
+        return [h('dt', null, key), dd];
+      }));
 
       renderDetailGallery(id);
+      loadDetailTasks(id);
       els.detailSheet.showModal();
+    }
+
+    /* ==========================================================
+       İlişkili task'lar (part_tasks): parça detayında listelenir, düzenlenir ve silinir
+       ========================================================== */
+
+    // Detay penceresi modal olduğu için toast arkada kalır; hatalar listenin altında gösterilir
+    const detailTasks = { box: null, rows: null, error: null, items: [], editingId: null, busy: false };
+
+    function createDetailTaskBox() {
+      const box = h('div', 'task-list');
+      const rows = h('div', 'task-rows');
+      const error = h('p', 'task-error');
+      error.setAttribute('role', 'alert');
+      box.append(rows, error);
+      Object.assign(detailTasks, { box, rows, error, items: [], editingId: null, busy: false });
+      rows.append(h('span', null, 'Yükleniyor…'));
+      return box;
+    }
+
+    function taskErrorMessage(err) {
+      if (err?.code === '23505') return 'Bu task bu parçada zaten kayıtlı.';
+      if (err?.code === 'PGRST205' || err?.code === '42P01') {
+        return 'Task tablosu bulunamadı (supabase/part_tasks.sql çalıştırıldı mı?).';
+      }
+      return errorMessage(err);
+    }
+
+    async function fetchPartTasks(partId) {
+      const { data, error } = await sb
+        .from('part_tasks')
+        .select('id, task')
+        .eq('part_id', partId)
+        .order('id', { ascending: true });
+      if (error) throw error;
+      return data;
+    }
+
+    async function loadDetailTasks(partId) {
+      const box = detailTasks.box;
+      try {
+        const items = await fetchPartTasks(partId);
+        if (state.detailId !== partId || detailTasks.box !== box) return; // Bu sırada başka parça açıldı
+        detailTasks.items = items;
+      } catch (err) {
+        if (state.detailId !== partId || detailTasks.box !== box) return;
+        detailTasks.items = [];
+        detailTasks.error.textContent = taskErrorMessage(err);
+      }
+      renderDetailTasks();
+    }
+
+    function renderDetailTasks() {
+      const { rows, items } = detailTasks;
+      rows.replaceChildren(...(items.length ? items.map(taskRow) : [h('span', null, '—')]));
+      rows.querySelector('.task-input')?.focus();
+    }
+
+    function taskButton(icon, label, onClick, danger = false) {
+      const btn = h('button', danger ? 'task-btn danger' : 'task-btn');
+      btn.type = 'button';
+      btn.title = label;
+      btn.setAttribute('aria-label', label);
+      setIcon(btn, icon);
+      btn.addEventListener('click', onClick);
+      return btn;
+    }
+
+    function taskRow(task) {
+      const row = h('div', 'task-row');
+
+      if (task.id !== detailTasks.editingId) {
+        row.append(
+          h('span', 'task-text', task.task),
+          taskButton('pencil', 'Task\'ı düzenle', () => {
+            detailTasks.editingId = task.id;
+            detailTasks.error.textContent = '';
+            renderDetailTasks();
+          }),
+          taskButton('trash', 'Task\'ı sil', () => deleteTask(task), true)
+        );
+        return row;
+      }
+
+      const input = h('input', 'task-input');
+      input.type = 'text';
+      input.value = task.task;
+      input.setAttribute('aria-label', 'Task metni');
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          saveTaskEdit(task, input.value);
+        } else if (e.key === 'Escape') {
+          e.preventDefault(); // Pencereyi değil yalnızca düzenlemeyi kapatır
+          e.stopPropagation();
+          cancelTaskEdit();
+        }
+      });
+      row.append(
+        input,
+        taskButton('check', 'Kaydet', () => saveTaskEdit(task, input.value)),
+        taskButton('close', 'Vazgeç', cancelTaskEdit)
+      );
+      return row;
+    }
+
+    function cancelTaskEdit() {
+      detailTasks.editingId = null;
+      detailTasks.error.textContent = '';
+      renderDetailTasks();
+    }
+
+    async function saveTaskEdit(task, value) {
+      if (detailTasks.busy) return;
+      const text = value.trim();
+      if (!text) {
+        detailTasks.error.textContent = 'Task boş olamaz. Silmek için çöp kutusunu kullanın.';
+        return;
+      }
+      if (text === task.task) {
+        cancelTaskEdit();
+        return;
+      }
+      if (detailTasks.items.some((t) => t.id !== task.id && t.task.toLowerCase() === text.toLowerCase())) {
+        detailTasks.error.textContent = 'Bu task bu parçada zaten kayıtlı.';
+        return;
+      }
+
+      const box = detailTasks.box;
+      detailTasks.busy = true;
+      detailTasks.error.textContent = '';
+      detailTasks.rows.querySelectorAll('button').forEach((b) => (b.disabled = true));
+      try {
+        const { data, error } = await sb.from('part_tasks').update({ task: text }).eq('id', task.id).select('id');
+        if (error) throw error;
+        if (!data.length) throw new Error('Kayıt güncellenemedi.');
+        if (detailTasks.box === box) { // Bu sırada başka parça açılmadıysa
+          task.task = text;
+          detailTasks.editingId = null;
+          renderDetailTasks();
+        }
+      } catch (err) {
+        // Düzenleme kutusu açık kalır; yazılan metin kaybolmaz
+        detailTasks.error.textContent = taskErrorMessage(err);
+        detailTasks.rows.querySelectorAll('button').forEach((b) => (b.disabled = false));
+      } finally {
+        detailTasks.busy = false;
+      }
+    }
+
+    async function deleteTask(task) {
+      if (detailTasks.busy) return;
+      const ok = await askConfirm(`"${task.task}" task'ı bu parçadan kalıcı olarak silinecek. Bu işlem geri alınamaz.`);
+      if (!ok) return;
+
+      const box = detailTasks.box;
+      detailTasks.busy = true;
+      detailTasks.error.textContent = '';
+      try {
+        const { data, error } = await sb.from('part_tasks').delete().eq('id', task.id).select('id');
+        if (error) throw error;
+        if (!data.length) throw new Error('Silme yetkisi yok veya kayıt bulunamadı.');
+        if (detailTasks.box === box) {
+          detailTasks.items = detailTasks.items.filter((t) => t.id !== task.id);
+          if (detailTasks.editingId === task.id) detailTasks.editingId = null;
+          renderDetailTasks();
+        }
+      } catch (err) {
+        detailTasks.error.textContent = taskErrorMessage(err);
+      } finally {
+        detailTasks.busy = false;
+      }
     }
 
     async function renderDetailGallery(partId) {
@@ -2559,6 +2856,255 @@
         renderDetailGallery(partId);
       } catch (err) {
         toast(errorMessage(err));
+      }
+    }
+
+    /* ==========================================================
+       İlişkili task'ları Excel'den toplu yükleme (A sütunu: parça no, B sütunu: task)
+       ========================================================== */
+
+    const taskImport = {
+      rows: [],        // Excel'den okunan [parça no, task] satırları
+      partIds: null,   // Parça no (büyük harf) -> parça id
+      existing: null,  // Kayıtlı task anahtarları (parça id + küçük harfli task)
+      plan: null,      // Son analiz: eklenecek, atlanacak ve bulunamayan satırlar
+      busy: false,
+      token: 0,        // Dosya değişince ya da pencere yeniden açılınca eski işlemin sonucu yok sayılır
+    };
+
+    let sheetJsPromise = null;
+
+    function plainError(message) {
+      return Object.assign(new Error(message), { plain: true });
+    }
+
+    function loadSheetJs() {
+      if (window.XLSX) return Promise.resolve(window.XLSX);
+      if (!sheetJsPromise) {
+        sheetJsPromise = new Promise((resolve, reject) => {
+          const script = document.createElement('script');
+          script.src = SHEETJS_URL;
+          script.integrity = SHEETJS_SRI;
+          script.crossOrigin = 'anonymous';
+          script.onload = () => resolve(window.XLSX);
+          script.onerror = () => {
+            sheetJsPromise = null;
+            script.remove();
+            reject(plainError('Excel kütüphanesi yüklenemedi. İnternet bağlantınızı kontrol edin.'));
+          };
+          document.head.append(script);
+        });
+      }
+      return sheetJsPromise;
+    }
+
+    const cellText = (value) => (value == null ? '' : String(value).replace(/ /g, ' ').trim());
+    const importKey = (partNumber) => partNumber.trim().toUpperCase(); // import.html ile aynı eşleştirme
+    const taskKey = (partId, task) => `${partId}\u0000${task.toLowerCase()}`;
+
+    // Başlık satırı tespiti için: küçük harf, aksansız, ayraçlar tek boşluk
+    function headerText(value) {
+      return cellText(value)
+        .toLocaleLowerCase('tr')
+        .replace(/ı/g, 'i')
+        .normalize('NFD')
+        .replace(/\p{M}/gu, '')
+        .replace(/[\s_\-./]+/g, ' ');
+    }
+
+    function looksLikeHeaderRow([partCell, taskCell]) {
+      return /^(pn|p n|part|part no|part number|partnumber|part numarasi|parca|parca no|parca numarasi|malzeme|malzeme no|malzeme numarasi)$/.test(headerText(partCell))
+        || /^(iliskili )?(task|gorev)( no| numarasi| kodu| tanimi)?$/.test(headerText(taskCell));
+    }
+
+    // Excel'in ilk sayfasındaki A ve B sütunlarını okur; ikisi de boş satırlar atlanır
+    async function readTaskRows(file) {
+      const XLSX = await loadSheetJs();
+      try {
+        const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        if (!sheet) return [];
+        return XLSX.utils
+          .sheet_to_json(sheet, { header: 1, raw: true, defval: '', blankrows: false })
+          .map((row) => [cellText(row[0]), cellText(row[1])])
+          .filter(([partNumber, task]) => partNumber || task);
+      } catch {
+        throw plainError('Dosya okunamadı. Geçerli bir Excel dosyası (.xlsx, .xls) seçin.');
+      }
+    }
+
+    function setImportStatus(text, bad = false) {
+      els.taskImportStatus.textContent = text;
+      els.taskImportStatus.style.color = bad ? 'var(--bad)' : '';
+    }
+
+    function setImportResult(text, bad = false) {
+      els.taskImportResult.textContent = text;
+      els.taskImportResult.classList.toggle('bad', bad);
+      els.taskImportResult.hidden = !text;
+    }
+
+    // Seçili dosyaya ait her şeyi temizler; yeni dosya seçilince ve pencere açılınca kullanılır
+    function clearTaskImportFile() {
+      Object.assign(taskImport, { rows: [], partIds: null, existing: null, plan: null, token: taskImport.token + 1 });
+      els.taskImportHeader.checked = false;
+      els.taskImportHeader.disabled = true;
+      els.taskImportStats.hidden = true;
+      els.taskImportMissing.hidden = true;
+      els.taskImportRun.disabled = true;
+      els.taskImportRun.textContent = 'İçe aktar';
+      setImportStatus('');
+      setImportResult('');
+    }
+
+    function resetTaskImport() {
+      clearTaskImportFile();
+      els.taskImportFile.value = '';
+      els.taskImportFile.disabled = taskImport.busy;
+    }
+
+    async function fetchExistingTaskKeys() {
+      const rows = await fetchAll('part_id, task', 'part_tasks');
+      return new Set(rows.map((r) => taskKey(r.part_id, r.task)));
+    }
+
+    async function onTaskImportFile() {
+      const file = els.taskImportFile.files[0];
+      clearTaskImportFile();
+      const token = taskImport.token;
+      if (!file) return;
+
+      try {
+        setImportStatus('Dosya okunuyor…');
+        const rows = await readTaskRows(file);
+        if (token !== taskImport.token) return;
+        if (!rows.length) throw plainError('Dosyada okunacak satır bulunamadı.');
+
+        setImportStatus('Parçalar ve kayıtlı task\'lar kontrol ediliyor…');
+        const [parts, existing] = await Promise.all([fetchAll('id, part_number'), fetchExistingTaskKeys()]);
+        if (token !== taskImport.token) return;
+
+        taskImport.rows = rows;
+        taskImport.partIds = new Map(parts.map((p) => [importKey(p.part_number), p.id]));
+        taskImport.existing = existing;
+        els.taskImportHeader.disabled = false;
+        els.taskImportHeader.checked = looksLikeHeaderRow(rows[0]);
+        analyzeTaskImport();
+      } catch (err) {
+        if (token !== taskImport.token) return;
+        setImportStatus(err.plain ? err.message : taskErrorMessage(err), true);
+      }
+    }
+
+    // Satırları parçalarla eşleştirir; hiçbir şey yazmaz. Sonuç özet olarak gösterilir.
+    function analyzeTaskImport() {
+      const { rows, partIds, existing } = taskImport;
+      const plan = { read: 0, toInsert: [], duplicate: 0, incomplete: 0, missingRows: 0, missingParts: new Map() };
+      const seen = new Set(existing);
+
+      for (const [partNumber, task] of rows.slice(els.taskImportHeader.checked ? 1 : 0)) {
+        plan.read++;
+        if (!partNumber || !task) {
+          plan.incomplete++;
+          continue;
+        }
+        const partId = partIds.get(importKey(partNumber));
+        if (partId == null) {
+          plan.missingRows++;
+          plan.missingParts.set(importKey(partNumber), partNumber);
+          continue;
+        }
+        const key = taskKey(partId, task);
+        if (seen.has(key)) {
+          plan.duplicate++;
+          continue;
+        }
+        seen.add(key);
+        plan.toInsert.push({ part_id: partId, task });
+      }
+
+      taskImport.plan = plan;
+      renderTaskImportPlan(plan);
+    }
+
+    function renderTaskImportPlan(plan) {
+      const stat = (label, value, tone = '') => {
+        const row = h('div', tone ? `import-stat ${tone}` : 'import-stat');
+        row.append(h('span', null, label), h('strong', null, String(value)));
+        return row;
+      };
+      els.taskImportStats.replaceChildren(
+        stat('Okunan satır', plan.read),
+        stat('Eklenecek task', plan.toInsert.length, plan.toInsert.length ? 'ok' : ''),
+        stat('Zaten kayıtlı / tekrar (atlanır)', plan.duplicate),
+        stat('Parçası bulunamayan satır', plan.missingRows, plan.missingRows ? 'bad' : ''),
+        stat('Eksik satır (parça no ya da task boş)', plan.incomplete, plan.incomplete ? 'bad' : '')
+      );
+      els.taskImportStats.hidden = false;
+
+      const missing = [...plan.missingParts.values()];
+      const shown = missing.slice(0, 200).join(', ');
+      els.taskImportMissingTitle.textContent = `Bulunamayan parça numaraları (${missing.length})`;
+      els.taskImportMissingList.textContent = missing.length > 200
+        ? `${shown} … ve ${missing.length - 200} tane daha`
+        : shown;
+      els.taskImportMissing.hidden = !missing.length;
+
+      els.taskImportRun.disabled = !plan.toInsert.length;
+      els.taskImportRun.textContent = plan.toInsert.length ? `${plan.toInsert.length} task'ı içe aktar` : 'İçe aktar';
+      setImportStatus('');
+    }
+
+    async function runTaskImport() {
+      const plan = taskImport.plan;
+      if (taskImport.busy || !plan?.toInsert.length) return;
+
+      const token = taskImport.token;
+      const items = plan.toInsert;
+      taskImport.busy = true;
+      els.taskImportRun.disabled = true;
+      els.taskImportFile.disabled = true;
+      els.taskImportHeader.disabled = true;
+      setImportResult('');
+
+      let saved = 0;
+      let failure = null;
+      try {
+        for (let i = 0; i < items.length; i += TASK_INSERT_BATCH) {
+          if (token === taskImport.token) els.taskImportRun.textContent = `Yükleniyor ${saved}/${items.length}…`;
+          const batch = items.slice(i, i + TASK_INSERT_BATCH);
+          const { error } = await sb.from('part_tasks').insert(batch);
+          if (error) throw error;
+          saved += batch.length;
+        }
+      } catch (err) {
+        failure = err;
+      }
+
+      // Kayıtlı task'lar yeniden okunur; plan kalan işi gösterir, böylece hata sonrası tekrar denemek güvenlidir
+      let refreshed = null;
+      try {
+        refreshed = await fetchExistingTaskKeys();
+      } catch {
+        // Okunamazsa eski plan kullanılamaz (tekrar yükleme çift kayıt denemesi olurdu)
+      }
+      taskImport.busy = false;
+      els.taskImportFile.disabled = false;
+      if (token !== taskImport.token) return; // Pencere yeniden açıldı; arayüz zaten sıfırlandı
+
+      els.taskImportHeader.disabled = false;
+      if (refreshed) {
+        taskImport.existing = refreshed;
+        analyzeTaskImport();
+      } else {
+        taskImport.plan = null;
+        els.taskImportRun.disabled = true;
+        els.taskImportRun.textContent = 'İçe aktar';
+      }
+      if (failure) {
+        setImportResult(`${saved} task eklendi, sonra hata oluştu: ${taskErrorMessage(failure)} Tekrar "içe aktar"a basarsanız kalanlar eklenir.`, true);
+      } else {
+        setImportResult(`✓ ${saved} task eklendi.`);
       }
     }
 
@@ -3293,6 +3839,16 @@
         b.addEventListener('click', () => setFolderEditEnabled(b.dataset.folderEditSet === 'on'));
       });
       els.connRefresh.addEventListener('click', checkConnection);
+
+      els.taskImportBtn.addEventListener('click', () => {
+        resetTaskImport();
+        els.taskImportSheet.showModal();
+      });
+      els.taskImportFile.addEventListener('change', onTaskImportFile);
+      els.taskImportHeader.addEventListener('change', () => {
+        if (taskImport.partIds && !taskImport.busy) analyzeTaskImport();
+      });
+      els.taskImportRun.addEventListener('click', runTaskImport);
     }
 
     function init() {
