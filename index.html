@@ -264,8 +264,12 @@
       display: grid;
       gap: 10px;
       grid-template-columns: repeat(3, minmax(0, 1fr));
-      grid-auto-rows: 200px;
     }
+
+    /* Sütun sayısı grid modundan gelir (varsayılan 3); satırlar kart oranında akar,
+       ekrana kaç satır sığarsa o kadarı görünür */
+    .grid[data-mode="2"], .folder-grid[data-mode="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid[data-mode="1"], .folder-grid[data-mode="1"] { grid-template-columns: repeat(1, minmax(0, 1fr)); }
 
     .card {
       position: relative;
@@ -310,7 +314,6 @@
       height: 100%;
       object-fit: cover;
     }
-
     /* Klasör adı artık görselin altında ayrı yer kaplamaz; resmin üzerine bindirilir
        ki kapak görseli kartın tamamını kullanabilsin */
     .folder-card .meta {
@@ -434,17 +437,28 @@
     /* Aramada eşleşen ilişkili task'ın kartta gösterilen satırı */
     .card .card-task { color: var(--primary); font-weight: 600; }
 
-    .grid[data-mode="1x1"] .title,
-    .folder-grid[data-mode="1x1"] .title { font-size: 18px; }
-    .grid[data-mode="1x1"] .sub,
-    .folder-grid[data-mode="1x1"] .sub { font-size: 14px; }
-    .grid[data-mode="1x1"] .card-note,
-    .folder-grid[data-mode="1x1"] .card-note {
+    .grid[data-mode="1"] .title,
+    .folder-grid[data-mode="1"] .title { font-size: 18px; }
+    .grid[data-mode="1"] .sub,
+    .folder-grid[data-mode="1"] .sub { font-size: 14px; }
+    .grid[data-mode="1"] .card-note,
+    .folder-grid[data-mode="1"] .card-note {
       font-size: 13px;
       white-space: normal;
       display: -webkit-box;
       -webkit-line-clamp: 3;
       -webkit-box-orient: vertical;
+    }
+
+    @media (max-width: 899px) {
+      /* Parça kartı yüksekliği görselin oranından gelir (sabit satır yüksekliği yok) */
+      .grid .thumb { flex: none; aspect-ratio: 1; }
+      .grid[data-mode="1"] .thumb { aspect-ratio: 4 / 3; }
+
+      /* Ana sayfada klasörler grid modundan bağımsız 2 sütunlu (2x2) büyük kartlardır;
+         yazı da kartla birlikte büyür (1 sütun kuralından sonra gelir ki her modda aynı kalsın) */
+      .folder-grid[data-home="true"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .folder-grid[data-home="true"] .title { font-size: 16px; }
     }
 
     .empty {
@@ -1138,16 +1152,15 @@
       .icon-btn:hover { border-color: var(--primary); }
 
       /* Kartlar sütun sayısını pencere genişliğine göre kendisi belirler;
-         grid modu (1x1 / 2x3 / 3x4) burada kart genişliğini ayarlar */
+         grid modu (3 / 2 / 1 sütun) burada kart genişliğini ayarlar */
       .grid,
       .folder-grid {
         grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
         gap: 14px;
       }
 
-      .grid { grid-auto-rows: auto; }
-      .grid[data-mode="3x4"], .folder-grid[data-mode="3x4"] { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
-      .grid[data-mode="1x1"], .folder-grid[data-mode="1x1"] { grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
+      .grid[data-mode="2"], .folder-grid[data-mode="2"] { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+      .grid[data-mode="1"], .folder-grid[data-mode="1"] { grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
 
       .grid .card { aspect-ratio: 4 / 5; }
       .card { transition: transform .12s, box-shadow .12s; }
@@ -1318,9 +1331,9 @@
             <div class="setting-card">
               <span>Katalog grid modu</span>
               <div class="segmented">
-                <button type="button" data-grid-set="1x1">1x1</button>
-                <button type="button" data-grid-set="2x3">2x3</button>
-                <button type="button" data-grid-set="3x4">3x4</button>
+                <button type="button" data-grid-set="1">1 sütun</button>
+                <button type="button" data-grid-set="2">2 sütun</button>
+                <button type="button" data-grid-set="3">3 sütun</button>
               </div>
             </div>
 
@@ -1544,12 +1557,10 @@
     const IMAGE_SCALE_STEP = 0.75;
     const IMAGE_MAX_PASSES = 4;
 
-    const GRID_MODES = {
-      '1x1': { rows: 1, cols: 1 },
-      '2x3': { rows: 2, cols: 3 },
-      '3x4': { rows: 3, cols: 4 },
-    };
-    const GRID_ORDER = ['2x3', '3x4', '1x1'];
+    // Grid modu = sütun sayısı; satırlar ekrana sığdığı kadar akar
+    const GRID_ORDER = ['3', '2', '1'];
+    // Eski sürümde cihazda saklanmış mod adları yeni karşılıklarına çevrilir
+    const LEGACY_GRID_MODES = { '2x3': '3', '3x4': '3', '1x1': '1' };
 
     // Her alanın ilk seçildiğinde kullanacağı yön
     const SORT_FIELDS = {
@@ -1652,7 +1663,7 @@
       sortField: savedSort.field,
       sortAsc: savedSort.asc,
       mtFilter: new Set(savedFilters.mt),
-      gridMode: prefs.get('gridMode', '2x3'),
+      gridMode: prefs.get('gridMode', '3'),
       theme: prefs.get('theme', 'light'),
       mtValues: [],
       editing: null,         // Düzenlenen parça (yeni parça için null)
@@ -1679,7 +1690,8 @@
       folderImageRemoved: false, // Düzenlemede mevcut görsel kaldırıldı mı
       folderEditEnabled: prefs.get('folderEditEnabled', '1') !== '0', // Klasör ekleme/düzenleme/silme aktif mi
     };
-    if (!GRID_MODES[state.gridMode]) state.gridMode = '2x3';
+    state.gridMode = LEGACY_GRID_MODES[state.gridMode] ?? state.gridMode;
+    if (!GRID_ORDER.includes(state.gridMode)) state.gridMode = '3';
     if (!['light', 'dark'].includes(state.theme)) state.theme = 'light';
 
     const els = Object.fromEntries([...document.querySelectorAll('[id]')].map((el) => [el.id, el]));
@@ -2131,6 +2143,7 @@
         els.pageTitle.textContent = folder ? folder.name : TITLES.catalog;
       }
       updateNewFolderBtnVisibility();
+      syncGridBtn();
     }
 
     // Sanal "Karışık" klasörünün DB karşılığı yoktur; içindeyken yeni klasör oluşturulamaz
@@ -2142,6 +2155,7 @@
     async function renderFolderSection(folders) {
       state.foldersInView = folders;
       await ensureParentNamesCached(folders); // kart etiketleri için üst klasör adları hazır olsun
+      applyGridLayout(); // Ana sayfa/klasör içi geçişinde sütun sayısı kartlarla birlikte değişsin
       els.folderGrid.replaceChildren(...folders.map(createFolderCard));
       els.folderGrid.hidden = !folders.length;
     }
@@ -2479,32 +2493,27 @@
       else els.resultCount.textContent = `${count} Sonuç Bulundu`;
     }
 
-    // Masaüstü düzeninde (CSS ile aynı eşik) sütun sayısını CSS belirler; satır yüksekliği kart oranından gelir
+    // Sütun sayısı, kart oranı ve masaüstü/mobil ayrımı CSS'te (data-mode / data-home) çözülür;
+    // burada yalnızca grid'lere mod ve ana sayfa durumu işlenir
     const desktopMQ = window.matchMedia('(min-width: 900px)');
 
     function applyGridLayout() {
-      const { rows, cols } = GRID_MODES[state.gridMode];
-      const wrap = els.gridWrap;
-      if (desktopMQ.matches) {
-        els.grid.style.gridTemplateColumns = '';
-        els.grid.style.gridAutoRows = '';
-        els.folderGrid.style.gridTemplateColumns = '';
-        els.grid.dataset.mode = state.gridMode;
-        els.folderGrid.dataset.mode = state.gridMode;
-        return;
-      }
-      const style = getComputedStyle(wrap);
-      const padding = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
-      const gap = 10;
-      // Görünür alan, satır sayısına bölünür: 2x3 modunda ekranda 2 satır görünür
-      const available = wrap.clientHeight - padding - gap * (rows - 1);
-      els.grid.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
-      els.grid.style.gridAutoRows = `${Math.max(120, Math.floor(available / rows))}px`;
       els.grid.dataset.mode = state.gridMode;
-
-      // Klasör bölümü ayrı bir grid olduğu için sütun sayısını ve yazı boyutu modunu kendisi de alır
-      els.folderGrid.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+      // Klasör bölümü ayrı bir grid olduğu için modu kendisi de alır.
+      // Mobil ana sayfadaki kök klasörler grid modundan bağımsız, sabit 2x2 büyük kartlarla gösterilir
       els.folderGrid.dataset.mode = state.gridMode;
+      els.folderGrid.dataset.home = String(isHomeFolderView());
+      syncGridBtn();
+    }
+
+    // Ana sayfa: kök klasörler listeleniyor (bir klasörün içinde ya da aramada değiliz)
+    function isHomeFolderView() {
+      return !state.currentFolderId && !searchTerm();
+    }
+
+    // Mobil ana sayfada klasör düzeni sabit olduğundan görünüm butonu yalnızca klasör içinde/aramada görünür
+    function syncGridBtn() {
+      els.gridBtn.hidden = !desktopMQ.matches && isHomeFolderView();
     }
 
     function setGridMode(mode) {
@@ -2514,7 +2523,7 @@
       document.querySelectorAll('[data-grid-set]').forEach((b) => {
         b.setAttribute('aria-pressed', String(b.dataset.gridSet === mode));
       });
-      els.gridBtn.title = `Görünüm: ${mode}`;
+      els.gridBtn.title = `Görünüm: ${mode} sütun`;
     }
 
     function nextGridMode() {
@@ -3844,7 +3853,6 @@
       els.filterChip.addEventListener('click', clearFilters);
 
       els.gridBtn.addEventListener('click', () => setGridMode(nextGridMode()));
-      new ResizeObserver(() => applyGridLayout()).observe(els.gridWrap);
 
       els.menuBtn.addEventListener('click', () => {
         if (state.view === 'form') goBack();
