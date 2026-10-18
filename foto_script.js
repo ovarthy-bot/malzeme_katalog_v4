@@ -6,10 +6,11 @@ const S={paused:false,stop:false};window.__fotoS=S;
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const d=document.createElement('div');d.id='fotoPanel';
 d.style.cssText='position:fixed;top:10px;left:10px;z-index:99999;background:#fff;padding:10px;border:2px solid #333;width:420px';
-d.innerHTML='<div>Excel sutunlarini yapistir (goods_rcvd_batch, pn, desc, type):</div><textarea rows="6" style="width:396px"></textarea><br><button id="fStart">Basla</button> <button id="fPause" disabled>Duraklat</button> <button id="fStop" disabled>Durdur</button><div id="fStat" style="margin-top:6px;font:12px monospace"></div>';
+d.innerHTML='<div>Excel sutunlarini yapistir (goods_rcvd_batch, pn, desc, type):</div><textarea rows="6" style="width:396px"></textarea><br><button id="fStart">Basla</button> <button id="fPause" disabled>Duraklat</button> <button id="fStop" disabled>Durdur</button><div style="height:12px;background:#ddd;margin-top:6px"><div id="fBar" style="height:100%;width:0;background:#2a7"></div></div><div id="fPct" style="font:12px monospace;margin-top:2px">0 / 0 (%0)</div><div id="fStat" style="margin-top:6px;font:12px monospace"></div>';
 document.body.appendChild(d);
 const $=id=>d.querySelector('#'+id);
 const ta=d.querySelector('textarea');
+const setProg=(n,t)=>{const p=t?Math.round(n*100/t):0;$('fBar').style.width=p+'%';$('fPct').textContent=n+' / '+t+' (%'+p+')';};
 const status=m=>{$('fStat').textContent=m;console.log('[FOTO]',m);};
 
 // type -> hedef klasor
@@ -17,11 +18,38 @@ const folderOf=t=>{const s=(t||'').replace(/\s+/g,'').toUpperCase();if(s.include
 
 const run=async(RAW,root)=>{
   // [sorgu no, parca no, tanim, tip, hedef klasor]
-  const PAIRS=RAW.split(/\r?\n/).map(l=>l.split('\t').map(s=>s.trim()))
+  const PARSED=RAW.split(/\r?\n/).map(l=>l.split('\t').map(s=>s.trim()))
     .filter(p=>p.length>=2&&p[0]&&p[1]&&p[0]!=='goods_rcvd_batch')
     .map(p=>[p[0],p[1],p[2]||'',p[3]||'',folderOf(p[3])])
     .filter((p,i,a)=>a.findIndex(x=>x[0]===p[0])===i);
   const log=(...a)=>status(a.join(' '));
+  const clean=s=>s.replace(/[\\/:*?"<>|]/g,'_');
+  // Supabase'de zaten kayitli parca numaralari sorgulanmadan atlanir (anahtar import.html ile ayni: trim + buyuk harf)
+  const SB_URL='https://rkjnyexhnkiigvwnqvtx.supabase.co',SB_KEY='sb_publishable_EmbtWNix9l-WR-kVoaWwDA_oBV2h29Z';
+  const pnKey=s=>s.trim().toUpperCase();
+  const fetchDbKeys=async()=>{
+    const keys=new Set(),PAGE=1000;
+    for(let from=0;;from+=PAGE){
+      const res=await fetch(SB_URL+'/rest/v1/parts?select=part_number&order=id&limit='+PAGE+'&offset='+from,{headers:{apikey:SB_KEY,Authorization:'Bearer '+SB_KEY}});
+      if(!res.ok)throw new Error('HTTP '+res.status);
+      const rows=await res.json();
+      rows.forEach(r=>keys.add(pnKey(r.part_number)));
+      if(rows.length<PAGE)return keys;
+    }
+  };
+  let PAIRS=PARSED,skipped=[];
+  try{
+    log('Supabase kontrol ediliyor...');
+    const dbKeys=await fetchDbKeys();
+    // Dosya adi clean(pn) ile uretildigi ve import.html pn'yi dosya adindan turettigi icin ikisi de denenir
+    const inDb=p=>dbKeys.has(pnKey(p))||dbKeys.has(pnKey(clean(p)));
+    skipped=PARSED.filter(p=>inDb(p[1]));
+    PAIRS=PARSED.filter(p=>!inDb(p[1]));
+    if(skipped.length)console.log('[FOTO] Veritabaninda var, atlandi ('+skipped.length+'):',skipped.map(p=>p[1]).join(', '));
+  }catch(e){
+    if(!confirm('Supabase kontrol edilemedi ('+e.message+').\nVeritabani kontrolu olmadan tum kayitlar islensin mi?')){log('IPTAL: Supabase kontrol edilemedi');return;}
+    log('UYARI: Supabase kontrol edilemedi, tum kayitlar islenecek');
+  }
   const visible=e=>e&&e.offsetParent!==null;
   const box=()=>[...document.querySelectorAll('input[type="text"]')].find(visible);
   const btn=()=>[...document.querySelectorAll('button')].find(b=>visible(b)&&/search/i.test(b.textContent.trim()));
@@ -58,7 +86,6 @@ const run=async(RAW,root)=>{
   let captured=[];
   const origOpen=window.open;
   window.open=(u)=>{captured.push(u);return null;};
-  const clean=s=>s.replace(/[\\/:*?"<>|]/g,'_');
 
   const dirCache={};
   const getDir=async folder=>{
@@ -96,8 +123,9 @@ const run=async(RAW,root)=>{
     return (folder?folder+'/':'')+fname;
   };
 
-  log(PAIRS.length+' kayit islenecek'+(root?' (klasore yazilacak)':' (normal indirme)'));
+  log(PAIRS.length+' kayit islenecek'+(skipped.length?', '+skipped.length+' tanesi veritabaninda var, atlandi':'')+(root?' (klasore yazilacak)':' (normal indirme)'));
   let processed=0;
+  setProg(0,PAIRS.length);
   for(const [q,part,,,folder] of PAIRS){
     if(!(await cp()))break;
     try{
@@ -128,9 +156,10 @@ const run=async(RAW,root)=>{
       }
     }catch(e){log('HATA',q,e.message);}
     processed++;
+    setProg(processed,PAIRS.length);
   }
   window.open=origOpen;window.fetch=origFetch;XP.send=origSend;
-  log(S.stop?'DURDURULDU':'BITTI');
+  log((S.stop?'DURDURULDU':'BITTI')+(skipped.length?' ('+skipped.length+' kayit veritabaninda var oldugu icin atlandi)':''));
 };
 
 $('fStart').onclick=async()=>{
