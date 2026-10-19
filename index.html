@@ -917,7 +917,7 @@
       letter-spacing: .04em;
     }
 
-    .sheet-actions { display: flex; gap: 10px; }
+    .sheet-actions { display: flex; gap: 10px; flex-shrink: 0; }
     .sheet-actions .btn { flex: 1; }
 
     /* Detay galerisi: yatay kaydırmalı */
@@ -927,12 +927,16 @@
       overflow-x: auto;
       scroll-snap-type: x mandatory;
       overscroll-behavior-x: contain;
+      flex-shrink: 0;
+      width: 100%;
+      aspect-ratio: 4 / 3;
     }
 
     .gallery-item {
       position: relative;
       flex: 0 0 100%;
-      aspect-ratio: 4 / 3;
+      width: 100%;
+      height: 100%;
       border-radius: 14px;
       background: var(--surface-2);
       scroll-snap-align: start;
@@ -964,15 +968,16 @@
 
     .gallery-remove svg { width: 14px; height: 14px; }
 
-    .gallery-empty { margin: 0; font-size: 13px; color: var(--muted); }
+    .gallery-empty { margin: auto; font-size: 13px; color: var(--muted); }
 
-    .detail-title { margin: 0; font-size: 20px; }
+    .detail-title { margin: 0; font-size: 20px; flex-shrink: 0; }
     .detail-pn { margin: 0; font-size: 14px; color: var(--muted); }
 
     .detail-pn-row {
       display: flex;
       align-items: center;
       gap: 8px;
+      flex-shrink: 0;
     }
 
     .copy-btn {
@@ -1210,7 +1215,7 @@
         align-content: start;
       }
 
-      #detailSheet .gallery { grid-column: 1; grid-row: 1 / -1; align-self: start; }
+      #detailSheet .gallery { grid-column: 1; grid-row: 1 / -1; align-self: start; position: sticky; top: 0; }
       #detailSheet .detail-title,
       #detailSheet .detail-pn-row,
       #detailSheet dl.fields,
@@ -1837,7 +1842,10 @@
         // Arama metni varken sonuçlar tüm klasörlerde (küresel) aranır; metni task'ında geçen parçalar da dahildir
         const filters = ['part_number', 'material_desc', 'notes', 'teknisyen_agzi']
           .map((col) => `${col}.ilike.*${term}*`);
-        if (state.taskMatches.size) filters.push(`id.in.(${[...state.taskMatches.keys()].join(',')})`);
+        if (state.taskMatches.size) {
+          const ids = [...state.taskMatches.keys()].slice(0, 250);
+          filters.push(`id.in.(${ids.join(',')})`);
+        }
         q = q.or(filters.join(','));
       } else if (state.currentFolderId && state.currentFolderId === state.orphanFolderId) {
         // "Karışık" klasörü (gerçek ya da sanal): öksüz parçaları, gerçek bir klasörse
@@ -2663,6 +2671,9 @@
         else dd.textContent = value || '—';
         return [h('dt', null, key), dd];
       }));
+
+      const sheetBody = els.detailSheet.querySelector('.sheet-body');
+      if (sheetBody) sheetBody.scrollTop = 0;
 
       renderDetailGallery(id);
       loadDetailTasks(id);
