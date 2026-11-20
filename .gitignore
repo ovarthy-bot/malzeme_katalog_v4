@@ -1,0 +1,7 @@
+# Gizli anahtarlar. scripts/embed-catalog.mjs anahtarları ortam değişkeninden okur; yine de bir dosyaya yazılırsa depoya girmesin.
+.env
+.env.*
+
+# Supabase CLI'nin yerel durumu (supabase link / functions deploy)
+supabase/.temp/
+supabase/.branches/
