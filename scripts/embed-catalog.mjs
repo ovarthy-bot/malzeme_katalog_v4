@@ -1,245 +1,379 @@
 #!/usr/bin/env node
-// Katalogdaki parça görsellerini CLIP ile vektöre çevirip part_image_embeddings tablosuna yazar (görsel arama için).
+// Katalogdaki parça görsellerini yerel olarak DINOv2 (Xenova/dinov2-small, 384 boyut) ile vektöre çevirip
+// hem yerel visual-index.bin dosyasına hem de Supabase Storage + app_notes üzerine yazar.
 //
-// Gereksinim: Node 18+ (ek paket gerekmez) ve supabase/visual_search.sql'in çalıştırılmış olması.
-//
-// Çalıştırma (PowerShell):
-//   $env:SUPABASE_SERVICE_ROLE_KEY = "..."     # Supabase > Project Settings > API > service_role (GİZLİ tutun)
-//   $env:REPLICATE_API_TOKEN       = "r8_..."  # replicate.com/account/api-tokens
-//   node scripts/embed-catalog.mjs --dry-run   # önce kaç görsel işleneceğini görün
-//   node scripts/embed-catalog.mjs --limit 20  # küçük bir deneme
-//   node scripts/embed-catalog.mjs             # hepsi
-//
-// Anahtarlar yalnızca ortam değişkeni olarak okunur; dosyaya yazılmaz, depoya girmez.
-// Betik tekrar çalıştırılabilir: yalnızca vektörü olmayan (veya başka modelle üretilmiş) görselleri işler,
-// yarıda kesilirse kaldığı yerden devam eder. Yeni görsel yüklendikten sonra da aynı komutla indekslenir.
-//
-// Seçenekler:
-//   --dry-run          Hiçbir şey çağırmadan işlenecek görsel sayısını yazar
-//   --limit <n>        En fazla n görsel işler
-//   --concurrency <n>  Aynı anda kaç görsel işlensin (varsayılan 4)
-//   --force            Vektörü olanları da yeniden üretir (model değiştirdiyseniz)
-//
-// Replicate görseli kendi indirir (Storage bucket'ı herkese açık), dosyalar bilgisayarınızdan geçmez.
-// İlk çağrıda model soğuk başlayabilir ve dakikalar sürebilir; betik bunu bekler.
+// Ücretli bir servis (Replicate vb.), Edge Function veya gizli service_role anahtarı GEREKTİRMEZ.
+// Aynı işlem tarayıcı içinden de (Ayarlar > Araçlar > Görsel arama dizini) yapılabilir.
 
 import { parseArgs } from 'node:util';
+import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
+import { fileURLToPath } from 'node:url';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
 
-// Edge Function (supabase/functions/visual-search/index.ts) ile AYNI model ve sürüm olmalı.
-const MODEL_VERSION = '1c0371070cb827ec3c7f2f28adcdde54b50dcd239aa6faea0bc98b174ef03fb4'; // krthr/clip-embeddings
-const MODEL_TAG = 'krthr/clip-embeddings@' + MODEL_VERSION.slice(0, 8);
-const EMBEDDING_DIMS = 768;
+const MODEL_ID = 'Xenova/dinov2-small';
+const EMBEDDING_DIMS = 384;
+const RECORD_BYTES = 8 + EMBEDDING_DIMS; // uint32 image_id + uint32 part_id + int8[384]
+const HEADER_BYTES = 16;
 
 const SUPABASE_URL = (process.env.SUPABASE_URL || 'https://rkjnyexhnkiigvwnqvtx.supabase.co').replace(/\/$/, '');
-const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const REPLICATE_TOKEN = process.env.REPLICATE_API_TOKEN;
-const REPLICATE_API = (process.env.REPLICATE_API_URL || 'https://api.replicate.com/v1').replace(/\/$/, '');
+const SUPABASE_KEY = process.env.SUPABASE_KEY || 'sb_publishable_EmbtWNix9l-WR-kVoaWwDA_oBV2h29Z';
+const BUCKET = 'part-images';
+const FIXED_INDEX_PATH = 'visual-index/dinov2-small-v1.bin';
+const INDEX_NOTE_KEY = 'visual_search_index';
+const LOCAL_INDEX_FILE = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'visual-index.bin');
+const PAGE = 1000;
 
-const PAGE = 1000; // PostgREST en fazla 1000 satır döndürür
-const WAIT_SECONDS = 60; // Replicate'in tahmini beklemesine izin verilen süre (sonra sorgulamaya geçilir)
-const PREDICTION_TIMEOUT_MS = 10 * 60 * 1000; // soğuk başlangıç dahil bir görsel için en uzun bekleme
-const POLL_MS = 3000;
-const MAX_ATTEMPTS = 3;
+function poolDinoEmbedding(tensor) {
+  const data = tensor.data;
+  const dim = EMBEDDING_DIMS;
+  const tokens = Math.floor(data.length / dim);
+  const vec = new Float32Array(dim);
+  if (tokens <= 1) {
+    for (let d = 0; d < dim; d++) vec[d] = data[d];
+  } else {
+    let clsNorm = 0;
+    for (let d = 0; d < dim; d++) clsNorm += data[d] * data[d];
+    clsNorm = Math.sqrt(clsNorm) || 1;
+
+    const patchCount = tokens - 1;
+    const patchMean = new Float32Array(dim);
+    for (let t = 1; t < tokens; t++) {
+      const base = t * dim;
+      for (let d = 0; d < dim; d++) patchMean[d] += data[base + d];
+    }
+    let patchNorm = 0;
+    for (let d = 0; d < dim; d++) {
+      patchMean[d] /= patchCount;
+      patchNorm += patchMean[d] * patchMean[d];
+    }
+    patchNorm = Math.sqrt(patchNorm) || 1;
+
+    for (let d = 0; d < dim; d++) {
+      vec[d] = 0.6 * (data[d] / clsNorm) + 0.4 * (patchMean[d] / patchNorm);
+    }
+  }
+  let norm = 0;
+  for (let d = 0; d < dim; d++) norm += vec[d] * vec[d];
+  norm = Math.sqrt(norm) || 1;
+  for (let d = 0; d < dim; d++) vec[d] /= norm;
+  return vec;
+}
+
+function quantizeVec(vec) {
+  let maxAbs = 0;
+  for (let i = 0; i < vec.length; i++) {
+    const a = Math.abs(vec[i]);
+    if (a > maxAbs) maxAbs = a;
+  }
+  const scale = maxAbs > 0 ? 127 / maxAbs : 0;
+  const out = new Int8Array(vec.length);
+  for (let i = 0; i < vec.length; i++) {
+    out[i] = Math.max(-127, Math.min(127, Math.round(vec[i] * scale)));
+  }
+  return out;
+}
+
+/* ---------- İşçi iş parçacığı (Worker) ---------- */
+
+if (!isMainThread) {
+  const { items } = workerData;
+  const { pipeline, RawImage } = await import('@huggingface/transformers');
+  const extractor = await pipeline('image-feature-extraction', MODEL_ID, { dtype: 'q8' });
+
+  async function downloadImage(url) {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const res = await fetch(url, { signal: AbortSignal.timeout(25000) });
+        if (res.status === 429 || res.status >= 500) {
+          if (attempt >= 8) throw new Error(`HTTP ${res.status}`);
+          const retryAfter = Number(res.headers.get('retry-after') || 0);
+          const delay = retryAfter > 0 ? retryAfter * 1000 : Math.min(15000, attempt * 2000);
+          await new Promise((r) => setTimeout(r, delay));
+          continue;
+        }
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const blob = await res.blob();
+        return await RawImage.fromBlob(blob);
+      } catch (err) {
+        if (attempt >= 7) throw err;
+        await new Promise((r) => setTimeout(r, Math.min(12000, attempt * 1800)));
+      }
+    }
+  }
+
+  // Cloudflare hız sınırına (429) takılmamak için işçi başına 2 önden indirme
+  const PREFETCH = 2;
+  let nextFetch = 0;
+  const prefetched = new Map();
+
+  function triggerPrefetch() {
+    while (prefetched.size < PREFETCH && nextFetch < items.length) {
+      const idx = nextFetch++;
+      const item = items[idx];
+      prefetched.set(idx, downloadImage(item.image_url).catch((err) => ({ __error: err })));
+    }
+  }
+
+  triggerPrefetch();
+  for (let i = 0; i < items.length; i++) {
+    triggerPrefetch();
+    const item = items[i];
+    try {
+      const imgOrErr = await prefetched.get(i);
+      prefetched.delete(i);
+      triggerPrefetch();
+      if (imgOrErr && imgOrErr.__error) throw imgOrErr.__error;
+      const out = await extractor(imgOrErr);
+      const qvec = quantizeVec(poolDinoEmbedding(out));
+      parentPort.postMessage({ ok: true, id: item.id, part_id: item.part_id, vec: qvec });
+    } catch (err) {
+      prefetched.delete(i);
+      parentPort.postMessage({ ok: false, id: item.id, url: item.image_url, error: err?.message || String(err) });
+    }
+  }
+  process.exit(0);
+}
+
+/* ---------- Ana süreç ---------- */
 
 const { values: opts } = parseArgs({
   options: {
     'dry-run': { type: 'boolean', default: false },
     force: { type: 'boolean', default: false },
     limit: { type: 'string' },
-    concurrency: { type: 'string', default: '4' },
+    workers: { type: 'string', default: '3' },
   },
 });
+
 const limit = opts.limit === undefined ? Infinity : Number(opts.limit);
-const concurrency = Number(opts.concurrency);
-if (!(limit > 0) || !(concurrency >= 1 && concurrency <= 16)) {
-  fail('--limit pozitif, --concurrency 1-16 arasında bir sayı olmalı.');
-}
-
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-function fail(message) {
-  console.error('HATA: ' + message);
+const workerCount = Number(opts.workers);
+if (!(limit > 0) || !(workerCount >= 1 && workerCount <= 16)) {
+  console.error('HATA: --limit pozitif, --workers 1-16 arasında bir sayı olmalı.');
   process.exit(1);
 }
 
-/* ---------- Supabase (PostgREST, service_role) ---------- */
-
-async function rest(path, { method = 'GET', headers = {}, body } = {}) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
-    method,
-    headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}`, 'Content-Type': 'application/json', ...headers },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const text = (await res.text()).slice(0, 400);
-    const hint = /PGRST205|42P01|part_image_embeddings/.test(text)
-      ? ' (supabase/visual_search.sql çalıştırıldı mı?)' : '';
-    throw new Error(`Supabase ${res.status} ${path.split('?')[0]}: ${text}${hint}`);
-  }
-  return method === 'GET' ? res.json() : null;
-}
-
-async function fetchAll(table, select, orderBy) {
+async function fetchAllImages() {
   const rows = [];
   for (let offset = 0; ; offset += PAGE) {
-    const page = await rest(`${table}?select=${select}&order=${orderBy}&limit=${PAGE}&offset=${offset}`);
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/part_images?select=id,part_id,image_url&order=id.asc&limit=${PAGE}&offset=${offset}`,
+      { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } }
+    );
+    if (!res.ok) throw new Error(`Supabase part_images HTTP ${res.status}: ${await res.text()}`);
+    const page = await res.json();
     rows.push(...page);
     if (page.length < PAGE) return rows;
   }
 }
 
-async function saveEmbedding(imageId, embedding) {
-  await rest('part_image_embeddings?on_conflict=image_id', {
-    method: 'POST',
-    headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
-    body: [{ image_id: imageId, embedding: `[${embedding.join(',')}]`, model: MODEL_TAG }],
-  });
+function parseIndexBuffer(buf) {
+  const map = new Map();
+  if (!buf || buf.byteLength < HEADER_BYTES) return map;
+  const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  const magic = String.fromCharCode(view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
+  const dims = view.getUint16(4, true);
+  const count = view.getUint32(8, true);
+  if (magic !== 'VS01' || dims !== EMBEDDING_DIMS) return map;
+  if (buf.byteLength < HEADER_BYTES + count * RECORD_BYTES) return map;
+
+  for (let i = 0; i < count; i++) {
+    const base = HEADER_BYTES + i * RECORD_BYTES;
+    const imageId = view.getUint32(base, true);
+    const partId = view.getUint32(base + 4, true);
+    const vec = new Int8Array(buf.buffer, buf.byteOffset + base + 8, EMBEDDING_DIMS).slice();
+    map.set(imageId, { part_id: partId, vec });
+  }
+  return map;
 }
 
-/* ---------- Replicate ---------- */
-
-// exact: bekleme süresi Replicate'ten geldiği için olduğu gibi uygulanır; değilse denemeler arttıkça uzar
-class RetryableError extends Error {
-  constructor(message, delayMs, exact = false) {
-    super(message);
-    this.delayMs = delayMs;
-    this.exact = exact;
-  }
-}
-
-async function replicate(path, init = {}) {
-  let res;
-  try {
-    res = await fetch(`${REPLICATE_API}${path}`, {
-      ...init,
-      headers: { Authorization: `Bearer ${REPLICATE_TOKEN}`, 'Content-Type': 'application/json', ...init.headers },
-    });
-  } catch (err) {
-    throw new RetryableError(`ağ hatası (${err.cause?.code || err.message})`, 5000);
-  }
-  if (res.status === 429) {
-    // Düşük bakiyeli hesaplarda dakikada ~6 istek sınırı vardır; Replicate ne kadar bekleneceğini bildirir
-    const body = await res.json().catch(() => ({}));
-    const seconds = Number(body.retry_after ?? res.headers.get('retry-after') ?? 10);
-    throw new RetryableError('Replicate istek sınırı', (Number.isFinite(seconds) ? seconds : 10) * 1000 + 500, true);
-  }
-  if (res.status >= 500) throw new RetryableError(`Replicate ${res.status}`, 5000);
-  if (!res.ok) {
-    const text = (await res.text()).slice(0, 300);
-    if (res.status === 401) fail('Replicate anahtarı geçersiz (REPLICATE_API_TOKEN).');
-    if (res.status === 402) fail('Replicate kredisi yetersiz (replicate.com/account/billing).');
-    throw new Error(`Replicate ${res.status}: ${text}`);
-  }
-  return res.json();
-}
-
-// 429 / ağ / 5xx hatalarında bekleyip yeniden dener
-async function withRetry(fn, attempts = 8) {
-  for (let i = 1; ; i++) {
+async function loadExistingIndex() {
+  const merged = new Map();
+  // 1) Yerel dosya varsa oku
+  if (existsSync(LOCAL_INDEX_FILE)) {
     try {
-      return await fn();
-    } catch (err) {
-      if (!(err instanceof RetryableError) || i >= attempts) throw err;
-      await sleep(err.exact ? err.delayMs : err.delayMs * Math.min(i, 3));
+      const localBuf = readFileSync(LOCAL_INDEX_FILE);
+      for (const [k, v] of parseIndexBuffer(localBuf)) merged.set(k, v);
+    } catch {}
+  }
+  // 2) Sunucudaki dizini oku (app_notes veya sabit yol)
+  try {
+    let remoteUrl = `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${FIXED_INDEX_PATH}?t=${Date.now()}`;
+    const noteRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/app_notes?select=content&key=eq.${INDEX_NOTE_KEY}`,
+      { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } }
+    );
+    if (noteRes.ok) {
+      const notes = await noteRes.json();
+      const meta = JSON.parse(notes[0]?.content || 'null');
+      if (meta?.url) remoteUrl = `${meta.url}?t=${Date.now()}`;
     }
-  }
+    const res = await fetch(remoteUrl);
+    if (res.ok) {
+      const ab = await res.arrayBuffer();
+      for (const [k, v] of parseIndexBuffer(new Uint8Array(ab))) merged.set(k, v);
+    }
+  } catch {}
+  return merged;
 }
 
-async function predictEmbedding(imageUrl) {
-  let prediction = await withRetry(() => replicate('/predictions', {
+function buildIndexBuffer(entriesMap) {
+  const ids = [...entriesMap.keys()].sort((a, b) => a - b);
+  const totalBytes = HEADER_BYTES + ids.length * RECORD_BYTES;
+  const buf = new ArrayBuffer(totalBytes);
+  const view = new DataView(buf);
+  const u8 = new Uint8Array(buf);
+
+  u8[0] = 0x56; u8[1] = 0x53; u8[2] = 0x30; u8[3] = 0x31;
+  view.setUint16(4, EMBEDDING_DIMS, true);
+  view.setUint16(6, 1, true);
+  view.setUint32(8, ids.length, true);
+  view.setUint32(12, 0, true);
+
+  for (let i = 0; i < ids.length; i++) {
+    const imageId = ids[i];
+    const entry = entriesMap.get(imageId);
+    const base = HEADER_BYTES + i * RECORD_BYTES;
+    view.setUint32(base, imageId, true);
+    view.setUint32(base + 4, entry.part_id, true);
+    new Int8Array(buf, base + 8, EMBEDDING_DIMS).set(entry.vec);
+  }
+  return Buffer.from(buf);
+}
+
+function saveLocalIndex(entriesMap) {
+  const payload = buildIndexBuffer(entriesMap);
+  writeFileSync(LOCAL_INDEX_FILE, payload);
+  return payload;
+}
+
+async function uploadIndex(entriesMap) {
+  const payload = saveLocalIndex(entriesMap);
+
+  // Storage RLS politikası UPDATE yerine DELETE + INSERT izinli olduğundan önce eski dosyayı silip sonra ekliyoruz
+  await fetch(`${SUPABASE_URL}/storage/v1/object/${BUCKET}`, {
+    method: 'DELETE',
+    headers: {
+      apikey: SUPABASE_KEY,
+      Authorization: `Bearer ${SUPABASE_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ prefixes: [FIXED_INDEX_PATH] }),
+  }).catch(() => {});
+
+  const res = await fetch(`${SUPABASE_URL}/storage/v1/object/${BUCKET}/${FIXED_INDEX_PATH}`, {
     method: 'POST',
-    headers: { Prefer: `wait=${WAIT_SECONDS}` },
-    body: JSON.stringify({ version: MODEL_VERSION, input: { image: imageUrl } }),
-  }));
+    headers: {
+      apikey: SUPABASE_KEY,
+      Authorization: `Bearer ${SUPABASE_KEY}`,
+      'Content-Type': 'image/jpeg',
+    },
+    body: payload,
+  });
+  if (!res.ok) throw new Error(`Dizin yüklenemedi (HTTP ${res.status}): ${await res.text()}`);
 
-  const deadline = Date.now() + PREDICTION_TIMEOUT_MS;
-  while (prediction.status === 'starting' || prediction.status === 'processing') {
-    if (Date.now() > deadline) throw new Error('zaman aşımı (model yanıt vermedi)');
-    await sleep(POLL_MS);
-    prediction = await withRetry(() => replicate(`/predictions/${prediction.id}`));
-  }
-  if (prediction.status !== 'succeeded') {
-    throw new Error(`tahmin ${prediction.status}: ${String(prediction.error || '').slice(0, 200)}`);
-  }
-  const embedding = prediction.output?.embedding;
-  if (!Array.isArray(embedding) || embedding.length !== EMBEDDING_DIMS || !embedding.every(Number.isFinite)) {
-    throw new Error(`beklenmeyen çıktı: ${EMBEDDING_DIMS} sayılık vektör bekleniyordu, ${Array.isArray(embedding) ? embedding.length + ' sayı' : typeof embedding} geldi`);
-  }
-  return embedding;
+  const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${FIXED_INDEX_PATH}`;
+  const meta = {
+    url: publicUrl,
+    path: FIXED_INDEX_PATH,
+    model: MODEL_ID,
+    dims: EMBEDDING_DIMS,
+    count: entriesMap.size,
+    updated_at: new Date().toISOString(),
+  };
+  await fetch(`${SUPABASE_URL}/rest/v1/app_notes`, {
+    method: 'POST',
+    headers: {
+      apikey: SUPABASE_KEY,
+      Authorization: `Bearer ${SUPABASE_KEY}`,
+      'Content-Type': 'application/json',
+      Prefer: 'resolution=merge-duplicates,return=minimal',
+    },
+    body: JSON.stringify([{ key: INDEX_NOTE_KEY, content: JSON.stringify(meta), updated_at: meta.updated_at }]),
+  }).catch(() => {});
+  return { bytes: payload.byteLength, count: entriesMap.size };
 }
-
-/* ---------- Ana akış ---------- */
 
 async function main() {
-  if (!SERVICE_KEY) fail('SUPABASE_SERVICE_ROLE_KEY tanımlı değil (dosyanın başındaki çalıştırma adımlarına bakın).');
-  if (!REPLICATE_TOKEN && !opts['dry-run']) fail('REPLICATE_API_TOKEN tanımlı değil (dosyanın başındaki çalıştırma adımlarına bakın).');
-
-  console.log('Katalog okunuyor…');
-  const [images, existing] = await Promise.all([
-    fetchAll('part_images', 'id,image_url', 'id'),
-    fetchAll('part_image_embeddings', 'image_id,model', 'image_id'),
+  console.log('Katalog ve mevcut görsel arama dizini okunuyor…');
+  const [images, existingMap] = await Promise.all([
+    fetchAllImages(),
+    opts.force ? Promise.resolve(new Map()) : loadExistingIndex(),
   ]);
-  const doneModel = new Map(existing.map((e) => [e.image_id, e.model]));
 
-  const withUrl = images.filter((img) => img.image_url);
-  const todo = withUrl.filter((img) => opts.force || doneModel.get(img.id) !== MODEL_TAG);
+  const validImages = images.filter((img) => img.image_url && img.id && img.part_id);
+  const entriesMap = new Map();
+  for (const img of validImages) {
+    const prev = existingMap.get(img.id);
+    if (prev) entriesMap.set(img.id, { part_id: img.part_id, vec: prev.vec });
+  }
+  const removedStale = existingMap.size - entriesMap.size;
+
+  const todo = validImages.filter((img) => !entriesMap.has(img.id));
   const queue = todo.slice(0, limit);
 
-  const stale = withUrl.filter((img) => doneModel.has(img.id) && doneModel.get(img.id) !== MODEL_TAG).length;
-  console.log(`Toplam görsel: ${images.length} • vektörü hazır: ${withUrl.length - todo.length}` +
-    ` • işlenecek: ${queue.length}${stale ? ` (${stale} tanesi başka modelle üretilmişti)` : ''}`);
-  if (opts['dry-run'] || !queue.length) {
-    if (!queue.length) console.log('Yapılacak bir şey yok.');
+  console.log(
+    `Toplam görsel: ${validImages.length} • dizinde hazır: ${entriesMap.size}` +
+    (removedStale > 0 ? ` (${removedStale} silinmiş görsel temizlendi)` : '') +
+    ` • işlenecek: ${queue.length}`
+  );
+
+  if (opts['dry-run']) return 0;
+  if (!queue.length) {
+    const info = await uploadIndex(entriesMap);
+    console.log(`Dizin güncel (${info.count} görsel, ${(info.bytes / 1024).toFixed(0)} KB).`);
     return 0;
   }
 
-  let next = 0, done = 0, failed = 0, stopping = false;
-  const failures = [];
-  process.once('SIGINT', () => {
-    stopping = true;
-    console.log('\nDurduruluyor: süren görseller bitince çıkılacak (tamamlananlar kaydedildi)…');
-  });
+  const { pipeline } = await import('@huggingface/transformers');
+  console.log(`Model hazırlanıyor (${MODEL_ID})…`);
+  await pipeline('image-feature-extraction', MODEL_ID, { dtype: 'q8' });
 
+  const actualWorkers = Math.min(workerCount, queue.length);
+  const chunks = Array.from({ length: actualWorkers }, () => []);
+  queue.forEach((item, idx) => chunks[idx % actualWorkers].push(item));
+
+  let done = 0;
+  let failed = 0;
+  const failures = [];
   const started = Date.now();
-  async function worker() {
-    while (!stopping && next < queue.length) {
-      const img = queue[next++];
-      try {
-        let embedding;
-        for (let attempt = 1; ; attempt++) {
-          try {
-            embedding = await predictEmbedding(img.image_url);
-            break;
-          } catch (err) {
-            // Geçici model hatalarında bir kez daha dene; kalıcı olanlar (ör. silinmiş dosya) aynı hatayı verir
-            if (attempt >= MAX_ATTEMPTS - 1) throw err;
-            await sleep(2000 * attempt);
-          }
-        }
-        await saveEmbedding(img.id, embedding);
+  const scriptPath = fileURLToPath(import.meta.url);
+
+  await Promise.all(chunks.map((items) => new Promise((resolveWorker, rejectWorker) => {
+    const worker = new Worker(scriptPath, { workerData: { items } });
+    worker.on('message', (msg) => {
+      if (msg.ok) {
+        entriesMap.set(msg.id, { part_id: msg.part_id, vec: msg.vec });
         done++;
-      } catch (err) {
+        if (done % 100 === 0) {
+          try { saveLocalIndex(entriesMap); } catch {}
+        }
+      } else {
         failed++;
-        failures.push({ id: img.id, url: img.image_url, error: err.message });
-        console.error(`  ✗ görsel #${img.id}: ${err.message}`);
+        failures.push(msg);
+        console.error(`  ✗ görsel #${msg.id}: ${msg.error}`);
       }
       const n = done + failed;
-      if (n % 10 === 0 || n === queue.length) {
-        const perMin = n / ((Date.now() - started) / 60000);
-        const etaMin = Math.ceil((queue.length - n) / Math.max(perMin, 0.01));
-        console.log(`  [${n}/${queue.length}] ${done} tamam, ${failed} hata • ~${perMin.toFixed(0)}/dk • kalan ≈ ${etaMin} dk`);
+      if (n % 50 === 0 || n === queue.length) {
+        const elapsedSec = Math.max((Date.now() - started) / 1000, 0.1);
+        const perSec = n / elapsedSec;
+        const etaSec = Math.ceil((queue.length - n) / Math.max(perSec, 0.1));
+        console.log(`  [${n}/${queue.length}] ${done} tamam, ${failed} hata • ${perSec.toFixed(1)} görsel/sn • kalan ≈ ${etaSec} sn`);
       }
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, worker));
+    });
+    worker.on('error', rejectWorker);
+    worker.on('exit', () => resolveWorker());
+  })));
 
-  console.log(`\nBitti: ${done} görsel vektörlendi, ${failed} hata, ${queue.length - done - failed} işlenmedi.`);
+  const info = await uploadIndex(entriesMap);
+  console.log(`\nBitti: ${info.count} görsel dizine kaydedildi (${(info.bytes / 1024).toFixed(0)} KB), ${failed} hata.`);
   if (failures.length) {
-    console.log('Hatalı görseller (tekrar çalıştırınca yeniden denenir):');
-    for (const f of failures.slice(0, 20)) console.log(`  #${f.id} ${f.url}\n      ${f.error}`);
-    if (failures.length > 20) console.log(`  … ve ${failures.length - 20} tane daha`);
+    for (const f of failures.slice(0, 15)) console.log(`  #${f.id} ${f.url} -> ${f.error}`);
   }
   return failed ? 1 : 0;
 }
 
-main().then((code) => process.exit(code), (err) => fail(err.message));
+main().then((code) => process.exit(code), (err) => {
+  console.error('HATA:', err?.message || err);
+  process.exit(1);
+});

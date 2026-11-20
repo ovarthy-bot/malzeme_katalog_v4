@@ -2,6 +2,9 @@
 .env
 .env.*
 
+# Yerel Node paketleri
+node_modules/
+
 # Supabase CLI'nin yerel durumu (supabase link / functions deploy)
 supabase/.temp/
 supabase/.branches/

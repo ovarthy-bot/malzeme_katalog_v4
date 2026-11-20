@@ -1529,6 +1529,11 @@
               <span>İlişkili Task yükle</span>
               <small>Excel'den (A: parça no, B: task) parçalara toplu task ekleyin</small>
             </button>
+
+            <button id="visualIndexBtn" class="setting-card link-card" type="button">
+              <span>Görsel arama dizini</span>
+              <small id="visualIndexInfo">Yeni yüklenen görselleri fotoğrafla aramaya dahil edin</small>
+            </button>
           </div>
         </section>
       </main>
@@ -1733,13 +1738,18 @@
     const IMAGE_SCALE_STEP = 0.75;
     const IMAGE_MAX_PASSES = 4;
 
-    // Görsel arama: fotoğraf Edge Function'a gider (supabase/functions/visual-search); Replicate anahtarı tarayıcıda durmaz
-    const VISUAL_SEARCH_URL = `${SUPABASE_URL}/functions/v1/visual-search`;
-    const VISUAL_QUERY_MAX_SIDE = 512; // CLIP görseli zaten ~224 px'e indirir; küçük gönderim hızlı ve ucuzdur
+    // Görsel arama: DINOv2 (Xenova/dinov2-small, 384 boyut) doğrudan tarayıcıda çalışır; Edge Function veya Replicate gerekmez
+    const VISUAL_MODEL_ID = 'Xenova/dinov2-small';
+    const VISUAL_TRANSFORMERS_URL = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3';
+    const VISUAL_INDEX_PATH = 'visual-index/dinov2-small-v1.bin';
+    const VISUAL_INDEX_NOTE_KEY = 'visual_search_index';
+    const VISUAL_EMBEDDING_DIMS = 384;
+    const VISUAL_RECORD_BYTES = 8 + VISUAL_EMBEDDING_DIMS;
+    const VISUAL_HEADER_BYTES = 16;
+    const VISUAL_TOP_K = 5;
+    const VISUAL_QUERY_MAX_SIDE = 512;
     const VISUAL_QUERY_TARGET_BYTES = 200 * 1024;
-    const VISUAL_POLL_MS = 2500; // Model soğuk başlıyorsa (ilk arama) sonuç hazır olana kadar bu aralıkla sorulur
-    const VISUAL_TIMEOUT_MS = 5 * 60 * 1000;
-    const VISUAL_SLOW_AFTER_S = 8; // Bu süreden sonra "model hazırlanıyor" bilgisi gösterilir
+    const VISUAL_AUTO_INDEX_MAX = 10; // Arama sırasında dizinde az sayıda yeni görsel eksikse otomatik indekslenir
 
     // Grid modu = sütun sayısı; satırlar ekrana sığdığı kadar akar
     const GRID_ORDER = ['3', '2', '1'];
@@ -3620,6 +3630,8 @@
       }
 
       await syncPrimaryImage(partId);
+      visual.indexLoadedAt = 0;
+      syncVisualIndex({ maxNew: VISUAL_AUTO_INDEX_MAX }).catch(() => {});
     }
 
     // Parça "Karışık" dışında bir klasöre atandıysa, "Karışık" klasörlerindeki kısayollarını siler
@@ -3711,6 +3723,7 @@
       if (name === 'settings') {
         checkConnection();
         loadFeedbackNote();
+        refreshVisualIndexInfo();
       }
     }
 
@@ -3964,10 +3977,17 @@
     }
 
     /* ==========================================================
-       Görsel arama (CLIP + pgvector): fotoğraf çek / yükle → en benzer 5 parça
+       Görsel arama (DINOv2 tarayıcı içi + Supabase Storage dizini): fotoğraf çek / yükle → en benzer 5 parça
        ========================================================== */
 
-    const visual = { job: 0, abort: null, timer: null, previewUrl: null };
+    const visual = {
+      job: 0,
+      previewUrl: null,
+      extractorPromise: null,
+      indexMap: null,
+      indexLoadedAt: 0,
+      indexing: false,
+    };
 
     // 'pick' = fotoğraf seçimi, 'working' = aranıyor, 'results' = sonuç listesi, 'error' = hata
     function setVisualView(view) {
@@ -3987,10 +4007,6 @@
     // Süren aramayı iptal eder ve geçici kaynakları bırakır (panel kapanınca ve yeni arama başlarken)
     function resetVisualSearch() {
       visual.job++;
-      visual.abort?.abort();
-      visual.abort = null;
-      clearInterval(visual.timer);
-      visual.timer = null;
       if (visual.previewUrl) URL.revokeObjectURL(visual.previewUrl);
       visual.previewUrl = null;
       els.visualResults.replaceChildren();
@@ -4002,41 +4018,314 @@
       els.visualSheet.showModal();
     }
 
-    // Edge Function çağrısı; 2xx dışındaki yanıtlar anlaşılır bir hataya çevrilir
-    async function visualFetch(url, init) {
-      visual.abort = new AbortController();
-      const res = await fetch(url, {
-        ...init,
-        headers: { apikey: SUPABASE_KEY, ...init.headers },
-        signal: visual.abort.signal,
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        const err = new Error(data.error
-          || (res.status === 404
-            ? 'Görsel arama servisi bulunamadı (visual-search Edge Function yayınlanmış mı?).'
-            : `Sunucu hatası (HTTP ${res.status}).`));
-        err.fromServer = true;
-        throw err;
+    function poolDinoEmbedding(tensor) {
+      const data = tensor.data;
+      const dim = VISUAL_EMBEDDING_DIMS;
+      const tokens = Math.floor(data.length / dim);
+      const vec = new Float32Array(dim);
+      if (tokens <= 1) {
+        for (let d = 0; d < dim; d++) vec[d] = data[d];
+      } else {
+        let clsNorm = 0;
+        for (let d = 0; d < dim; d++) clsNorm += data[d] * data[d];
+        clsNorm = Math.sqrt(clsNorm) || 1;
+
+        const patchCount = tokens - 1;
+        const patchMean = new Float32Array(dim);
+        for (let t = 1; t < tokens; t++) {
+          const base = t * dim;
+          for (let d = 0; d < dim; d++) patchMean[d] += data[base + d];
+        }
+        let patchNorm = 0;
+        for (let d = 0; d < dim; d++) {
+          patchMean[d] /= patchCount;
+          patchNorm += patchMean[d] * patchMean[d];
+        }
+        patchNorm = Math.sqrt(patchNorm) || 1;
+
+        for (let d = 0; d < dim; d++) {
+          vec[d] = 0.6 * (data[d] / clsNorm) + 0.4 * (patchMean[d] / patchNorm);
+        }
       }
-      return data;
+      let norm = 0;
+      for (let d = 0; d < dim; d++) norm += vec[d] * vec[d];
+      norm = Math.sqrt(norm) || 1;
+      for (let d = 0; d < dim; d++) vec[d] /= norm;
+      return vec;
     }
 
-    // Fotoğrafı gönderir; model soğuk başlıyorsa sonuç hazır olana kadar sorgular. İptal edildiyse null döner.
-    async function requestVisualSearch(blob, job) {
-      let reply = await visualFetch(VISUAL_SEARCH_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'image/jpeg' },
-        body: blob,
-      });
-      const deadline = Date.now() + VISUAL_TIMEOUT_MS;
-      while (reply.status === 'pending') {
-        if (Date.now() > deadline) throw Object.assign(new Error('Zaman aşımı: model yanıt vermedi. Biraz sonra tekrar deneyin.'), { fromServer: true });
-        await new Promise((resolve) => setTimeout(resolve, VISUAL_POLL_MS));
-        if (job !== visual.job) return null;
-        reply = await visualFetch(`${VISUAL_SEARCH_URL}?id=${encodeURIComponent(reply.id)}`, {});
+    function quantizeVisualVec(vec) {
+      let maxAbs = 0;
+      for (let i = 0; i < vec.length; i++) {
+        const a = Math.abs(vec[i]);
+        if (a > maxAbs) maxAbs = a;
       }
-      return reply.results ?? [];
+      const scale = maxAbs > 0 ? 127 / maxAbs : 0;
+      const out = new Int8Array(vec.length);
+      for (let i = 0; i < vec.length; i++) {
+        out[i] = Math.max(-127, Math.min(127, Math.round(vec[i] * scale)));
+      }
+      return out;
+    }
+
+    function computeInt8Norm(int8Vec) {
+      let sum = 0;
+      for (let i = 0; i < int8Vec.length; i++) sum += int8Vec[i] * int8Vec[i];
+      return Math.sqrt(sum) || 1;
+    }
+
+    async function getVisualExtractor(onProgress) {
+      if (!visual.extractorPromise) {
+        visual.extractorPromise = (async () => {
+          const { pipeline, env } = await import(VISUAL_TRANSFORMERS_URL);
+          env.allowLocalModels = false;
+          return await pipeline('image-feature-extraction', VISUAL_MODEL_ID, {
+            dtype: 'q8',
+            progress_callback: (info) => {
+              if (onProgress && info?.status === 'progress' && Number.isFinite(info?.progress)) {
+                onProgress(Math.round(info.progress));
+              }
+            },
+          });
+        })().catch((err) => {
+          visual.extractorPromise = null;
+          throw plainError('Görsel analiz modeli yüklenemedi. İnternet bağlantınızı kontrol edin.');
+        });
+      }
+      return visual.extractorPromise;
+    }
+
+    async function embedImageUrl(url, onProgress) {
+      const extractor = await getVisualExtractor(onProgress);
+      const out = await extractor(url);
+      return poolDinoEmbedding(out);
+    }
+
+    function parseVisualIndexBuffer(buf) {
+      const map = new Map();
+      if (!buf || buf.byteLength < VISUAL_HEADER_BYTES) return map;
+      const view = new DataView(buf);
+      const magic = String.fromCharCode(view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
+      const dims = view.getUint16(4, true);
+      const count = view.getUint32(8, true);
+      if (magic !== 'VS01' || dims !== VISUAL_EMBEDDING_DIMS) return map;
+      if (buf.byteLength < VISUAL_HEADER_BYTES + count * VISUAL_RECORD_BYTES) return map;
+
+      for (let i = 0; i < count; i++) {
+        const base = VISUAL_HEADER_BYTES + i * VISUAL_RECORD_BYTES;
+        const imageId = view.getUint32(base, true);
+        const partId = view.getUint32(base + 4, true);
+        const vec = new Int8Array(buf.slice(base + 8, base + 8 + VISUAL_EMBEDDING_DIMS));
+        map.set(imageId, { part_id: partId, vec, norm: computeInt8Norm(vec) });
+      }
+      return map;
+    }
+
+    function buildVisualIndexBuffer(entriesMap) {
+      const ids = [...entriesMap.keys()].sort((a, b) => a - b);
+      const totalBytes = VISUAL_HEADER_BYTES + ids.length * VISUAL_RECORD_BYTES;
+      const buf = new ArrayBuffer(totalBytes);
+      const view = new DataView(buf);
+      const u8 = new Uint8Array(buf);
+
+      u8[0] = 0x56; u8[1] = 0x53; u8[2] = 0x30; u8[3] = 0x31;
+      view.setUint16(4, VISUAL_EMBEDDING_DIMS, true);
+      view.setUint16(6, 1, true);
+      view.setUint32(8, ids.length, true);
+      view.setUint32(12, 0, true);
+
+      for (let i = 0; i < ids.length; i++) {
+        const imageId = ids[i];
+        const entry = entriesMap.get(imageId);
+        const base = VISUAL_HEADER_BYTES + i * VISUAL_RECORD_BYTES;
+        view.setUint32(base, imageId, true);
+        view.setUint32(base + 4, entry.part_id, true);
+        new Int8Array(buf, base + 8, VISUAL_EMBEDDING_DIMS).set(entry.vec);
+      }
+      return buf;
+    }
+
+    async function loadVisualIndex(force = false) {
+      if (!force && visual.indexMap && Date.now() - visual.indexLoadedAt < 60000) {
+        return visual.indexMap;
+      }
+      const urls = [
+        `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${VISUAL_INDEX_PATH}?t=${Date.now()}`,
+        `visual-index.bin?t=${Date.now()}`,
+      ];
+      let bestMap = null;
+      for (const url of urls) {
+        try {
+          const res = await fetch(url, { cache: 'no-store' });
+          if (!res.ok) continue;
+          const buf = await res.arrayBuffer();
+          const parsed = parseVisualIndexBuffer(buf);
+          if (!bestMap || parsed.size > bestMap.size) bestMap = parsed;
+          if (parsed.size > 0) break;
+        } catch {
+          // Sonraki kaynağı dene
+        }
+      }
+      if (!bestMap) {
+        if (visual.indexMap) return visual.indexMap;
+        throw plainError('Görsel arama dizini indirilemedi. İnternet bağlantınızı kontrol edin.');
+      }
+      visual.indexMap = bestMap;
+      visual.indexLoadedAt = Date.now();
+      return visual.indexMap;
+    }
+
+    async function saveVisualIndex(entriesMap) {
+      const buf = buildVisualIndexBuffer(entriesMap);
+      const blob = new Blob([buf], { type: 'image/jpeg' });
+      // Storage RLS politikası UPDATE yerine DELETE + INSERT izinli olduğundan önce eski dosyayı kaldırıp sonra yüklüyoruz
+      await sb.storage.from(BUCKET).remove([VISUAL_INDEX_PATH]).catch(() => {});
+      const { error } = await sb.storage.from(BUCKET).upload(VISUAL_INDEX_PATH, blob, {
+        contentType: 'image/jpeg',
+      });
+      if (error) throw error;
+      visual.indexMap = entriesMap;
+      visual.indexLoadedAt = Date.now();
+
+      const meta = {
+        url: `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${VISUAL_INDEX_PATH}`,
+        path: VISUAL_INDEX_PATH,
+        model: VISUAL_MODEL_ID,
+        dims: VISUAL_EMBEDDING_DIMS,
+        count: entriesMap.size,
+        updated_at: new Date().toISOString(),
+      };
+      await sb.from('app_notes').upsert({
+        key: VISUAL_INDEX_NOTE_KEY,
+        content: JSON.stringify(meta),
+        updated_at: meta.updated_at,
+      });
+    }
+
+    // Katalogdaki görsellerle dizini karşılaştırır; yeni eklenenleri vektörleyip dizini günceller
+    async function syncVisualIndex({ maxNew = Infinity, onStatus } = {}) {
+      const [allImages, existingMap] = await Promise.all([
+        fetchAll('id, part_id, image_url', 'part_images'),
+        loadVisualIndex(true),
+      ]);
+      const validImages = allImages.filter((img) => img.id && img.part_id && img.image_url);
+      const nextMap = new Map();
+      for (const img of validImages) {
+        const prev = existingMap.get(img.id);
+        if (prev) nextMap.set(img.id, { part_id: img.part_id, vec: prev.vec, norm: prev.norm });
+      }
+      const removedCount = existingMap.size - nextMap.size;
+      const missing = validImages.filter((img) => !nextMap.has(img.id));
+
+      if (missing.length > maxNew) {
+        if (removedCount > 0) await saveVisualIndex(nextMap).catch(() => {});
+        return { entriesMap: nextMap, total: validImages.length, missingCount: missing.length, indexed: 0 };
+      }
+
+      let indexed = 0;
+      for (let i = 0; i < missing.length; i++) {
+        const img = missing[i];
+        if (onStatus) onStatus(`Yeni görseller dizine ekleniyor (${i + 1}/${missing.length})…`);
+        try {
+          const fvec = await embedImageUrl(img.image_url);
+          const qvec = quantizeVisualVec(fvec);
+          nextMap.set(img.id, { part_id: img.part_id, vec: qvec, norm: computeInt8Norm(qvec) });
+          indexed++;
+        } catch (err) {
+          console.warn('Görsel vektörlenemedi:', img.id, err);
+        }
+      }
+
+      if (indexed > 0 || removedCount > 0) {
+        if (onStatus) onStatus('Görsel arama dizini kaydediliyor…');
+        await saveVisualIndex(nextMap);
+      } else {
+        visual.indexMap = nextMap;
+        visual.indexLoadedAt = Date.now();
+      }
+      return { entriesMap: nextMap, total: validImages.length, missingCount: missing.length - indexed, indexed };
+    }
+
+    async function refreshVisualIndexInfo() {
+      if (!els.visualIndexInfo || visual.indexing) return;
+      try {
+        const [totalImages, entriesMap] = await Promise.all([
+          countAllImages(),
+          loadVisualIndex(false),
+        ]);
+        if (totalImages != null && entriesMap.size > 0) {
+          const diff = Math.max(0, totalImages - entriesMap.size);
+          els.visualIndexInfo.textContent = diff > 0
+            ? `${entriesMap.size}/${totalImages} görsel dizinde (${diff} yeni görsel eklenebilir)`
+            : `${entriesMap.size} görsel dizinde hazır • Güncellemek için dokunun`;
+        }
+      } catch {
+        // Sessizce varsayılan açıklamayı koru
+      }
+    }
+
+    async function runManualVisualIndexSync() {
+      if (visual.indexing) return;
+      visual.indexing = true;
+      els.visualIndexBtn.disabled = true;
+      const setInfo = (text) => {
+        if (els.visualIndexInfo) els.visualIndexInfo.textContent = text;
+      };
+      try {
+        setInfo('Katalog görselleri kontrol ediliyor…');
+        const res = await syncVisualIndex({
+          maxNew: Infinity,
+          onStatus: setInfo,
+        });
+        const msg = res.indexed > 0
+          ? `✓ ${res.indexed} yeni görsel eklendi (toplam ${res.entriesMap.size} görsel).`
+          : `✓ Görsel arama dizini güncel (${res.entriesMap.size} görsel).`;
+        setInfo(msg);
+        toast(msg);
+      } catch (err) {
+        const msg = err.plain ? err.message : errorMessage(err);
+        setInfo('Hata: ' + msg);
+        toast(msg);
+      } finally {
+        visual.indexing = false;
+        els.visualIndexBtn.disabled = false;
+      }
+    }
+
+    async function matchVisualIndex(queryVec, entriesMap) {
+      // Parça başına en yüksek benzerliğe sahip görseli seç
+      const bestByPart = new Map();
+      for (const [imageId, entry] of entriesMap) {
+        const { part_id: partId, vec, norm } = entry;
+        let dot = 0;
+        for (let d = 0; d < VISUAL_EMBEDDING_DIMS; d++) {
+          dot += queryVec[d] * vec[d];
+        }
+        const sim = norm > 0 ? dot / norm : 0;
+        const prev = bestByPart.get(partId);
+        if (!prev || sim > prev.similarity) {
+          bestByPart.set(partId, { part_id: partId, image_id: imageId, similarity: sim });
+        }
+      }
+
+      const candidates = [...bestByPart.values()]
+        .sort((a, b) => b.similarity - a.similarity)
+        .slice(0, VISUAL_TOP_K * 3);
+      if (!candidates.length) return [];
+
+      const { data: images } = await sb
+        .from('part_images')
+        .select('id, image_url')
+        .in('id', candidates.map((c) => c.image_id));
+      const urlByImageId = new Map((images || []).map((img) => [img.id, img.image_url]));
+
+      return candidates
+        .map((c) => ({
+          part_id: c.part_id,
+          image_url: urlByImageId.get(c.image_id) || null,
+          similarity: Math.round(Math.min(1, Math.max(0, c.similarity)) * 10000) / 10000,
+        }))
+        .slice(0, VISUAL_TOP_K * 2);
     }
 
     function createVisualItem(result, part) {
@@ -4048,7 +4337,7 @@
       const thumb = h('img', 'vs-thumb');
       thumb.alt = '';
       thumb.loading = 'lazy';
-      setImage(thumb, result.image_url);
+      setImage(thumb, result.image_url || part.image_url);
 
       const info = h('span', 'vs-info');
       info.append(h('span', 'vs-pn', part.part_number), h('span', 'vs-desc', part.material_desc || 'Açıklama girilmemiş'));
@@ -4081,11 +4370,11 @@
 
       const byId = new Map(parts.map((p) => [p.id, p]));
       parts.forEach((p) => state.partsById.set(p.id, p));
-      const rows = results.filter((r) => byId.has(r.part_id));
+      const rows = results.filter((r) => byId.has(r.part_id)).slice(0, VISUAL_TOP_K);
 
       if (!rows.length) {
         setVisualView('error');
-        setVisualStatus('Eşleşen parça bulunamadı. Görsel dizin henüz oluşturulmamış olabilir (scripts/embed-catalog.mjs).', { error: true });
+        setVisualStatus('Eşleşen parça bulunamadı. Ayarlar > Araçlar > "Görsel arama dizini" ile dizini güncelleyin.', { error: true });
         return;
       }
       els.visualResults.replaceChildren(...rows.map((r) => createVisualItem(r, byId.get(r.part_id))));
@@ -4096,7 +4385,6 @@
     async function runVisualSearch(file) {
       resetVisualSearch();
       const job = visual.job;
-      const startedAt = Date.now();
       setVisualView('working');
       setVisualStatus('Fotoğraf hazırlanıyor…', { busy: true });
       els.visualPreview.removeAttribute('src');
@@ -4107,25 +4395,42 @@
         visual.previewUrl = URL.createObjectURL(blob);
         els.visualPreview.src = visual.previewUrl;
 
-        // Soğuk başlangıçta bekleme dakikalar sürebilir; kullanıcı donmuş sanmasın diye geçen süre gösterilir
-        const tick = () => {
-          const seconds = Math.round((Date.now() - startedAt) / 1000);
-          setVisualStatus(seconds < VISUAL_SLOW_AFTER_S
-            ? 'Benzer parçalar aranıyor…'
-            : `Model hazırlanıyor, ilk aramada 1-2 dakika sürebilir… (${seconds} sn)`, { busy: true });
-        };
-        tick();
-        visual.timer = setInterval(tick, 1000);
+        setVisualStatus('Görsel analiz modeli hazırlanıyor…', { busy: true });
+        const [queryVec, indexMap] = await Promise.all([
+          embedImageUrl(visual.previewUrl, (pct) => {
+            if (job === visual.job) {
+              setVisualStatus(`Görsel analiz modeli indiriliyor (%${pct})…`, { busy: true });
+            }
+          }),
+          loadVisualIndex(false),
+        ]);
+        if (job !== visual.job) return;
 
-        const results = await requestVisualSearch(blob, job);
-        if (job !== visual.job || results === null) return;
-        clearInterval(visual.timer);
+        let activeIndex = indexMap;
+        if (!activeIndex.size) {
+          // Dizin henüz yoksa veya boşsa senkronize etmeyi dene
+          setVisualStatus('Görsel arama dizini kontrol ediliyor…', { busy: true });
+          const synced = await syncVisualIndex({
+            maxNew: VISUAL_AUTO_INDEX_MAX,
+            onStatus: (msg) => {
+              if (job === visual.job) setVisualStatus(msg, { busy: true });
+            },
+          });
+          activeIndex = synced.entriesMap;
+        }
+
+        if (!activeIndex.size) {
+          throw plainError('Görsel arama dizini henüz hazır değil. Birkaç saniye sonra tekrar deneyin veya Ayarlar > Araçlar > "Görsel arama dizini"ne dokunun.');
+        }
+
+        setVisualStatus('Benzer parçalar aranıyor…', { busy: true });
+        const results = await matchVisualIndex(queryVec, activeIndex);
+        if (job !== visual.job) return;
         await showVisualResults(results, job);
       } catch (err) {
-        if (job !== visual.job) return; // Panel kapatıldı ya da yeni arama başladı
-        clearInterval(visual.timer);
+        if (job !== visual.job) return;
         setVisualView('error');
-        setVisualStatus(err.fromServer ? err.message : errorMessage(err), { error: true });
+        setVisualStatus(err.plain ? err.message : errorMessage(err), { error: true });
       }
     }
 
@@ -4287,6 +4592,7 @@
         if (taskImport.partIds && !taskImport.busy) analyzeTaskImport();
       });
       els.taskImportRun.addEventListener('click', runTaskImport);
+      els.visualIndexBtn.addEventListener('click', runManualVisualIndexSync);
     }
 
     function init() {
